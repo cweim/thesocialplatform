@@ -9,8 +9,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  SafeAreaView,
 } from "react-native";
 import { useRouter } from "expo-router";
+import {
+  createUserInFirebase,
+  updateUserActivity,
+} from "../../src/services/userService";
 
 export default function NameEntryScreen() {
   const [name, setName] = useState("");
@@ -20,17 +25,14 @@ export default function NameEntryScreen() {
   const validateName = (inputName: string): boolean => {
     // Remove extra spaces and check length
     const trimmedName = inputName.trim();
-
     if (trimmedName.length < 2) {
       Alert.alert("Invalid Name", "Please enter at least 2 characters");
       return false;
     }
-
     if (trimmedName.length > 30) {
       Alert.alert("Invalid Name", "Name must be less than 30 characters");
       return false;
     }
-
     // Check for valid characters (letters, spaces, basic punctuation)
     const validNameRegex = /^[a-zA-Z\s\-\.\']+$/;
     if (!validNameRegex.test(trimmedName)) {
@@ -40,7 +42,6 @@ export default function NameEntryScreen() {
       );
       return false;
     }
-
     return true;
   };
 
@@ -50,145 +51,166 @@ export default function NameEntryScreen() {
     }
 
     setIsLoading(true);
-
     try {
-      // Store name temporarily (we'll save full user data when they join a group)
       const trimmedName = name.trim();
       console.log("✅ Name validated:", trimmedName);
 
-      // Navigate to code entry with the name
-      router.push({
-        pathname: "screens/CodeEntryScreen" as any,
-        params: { userName: trimmedName },
-      });
+      // Create user account without a specific group initially
+      const newUser = await createUserInFirebase(trimmedName);
+
+      if (newUser) {
+        // Track user creation activity
+        await updateUserActivity("user_created", { name: trimmedName });
+
+        console.log("✅ User created successfully:", newUser);
+
+        // Navigate directly to GroupsOverviewScreen per new user flow
+        router.replace("/screens/GroupsOverviewScreen");
+      } else {
+        throw new Error("Failed to create user account");
+      }
     } catch (error) {
-      console.error("❌ Error processing name:", error);
-      Alert.alert("Error", "Something went wrong. Please try again.");
+      console.error("❌ Error creating user:", error);
+      Alert.alert("Error", "Failed to create your account. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>What's your name?</Text>
-          <Text style={styles.subtitle}>
-            This is how others in your group will see you
-          </Text>
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <Text style={styles.title}>What's your name?</Text>
+            <Text style={styles.subtitle}>
+              This is how others in your groups will see you
+            </Text>
+          </View>
+
+          <View style={styles.inputSection}>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your name"
+              placeholderTextColor="rgba(255, 255, 255, 0.5)"
+              value={name}
+              onChangeText={setName}
+              autoFocus={true}
+              returnKeyType="done"
+              onSubmitEditing={handleContinue}
+              maxLength={30}
+            />
+            <Text style={styles.characterCount}>
+              {name.length}/30 characters
+            </Text>
+          </View>
+
+          <View style={styles.buttonSection}>
+            <TouchableOpacity
+              style={[
+                styles.continueButton,
+                { opacity: name.trim().length < 2 ? 0.5 : 1 },
+              ]}
+              onPress={handleContinue}
+              disabled={isLoading || name.trim().length < 2}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.continueButtonText}>
+                {isLoading ? "Creating Account..." : "Continue"}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>
+                You'll be able to change this later in your profile
+              </Text>
+            </View>
+          </View>
         </View>
-
-        <View style={styles.inputSection}>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your name"
-            placeholderTextColor="#999"
-            value={name}
-            onChangeText={setName}
-            autoFocus={true}
-            returnKeyType="done"
-            onSubmitEditing={handleContinue}
-            maxLength={30}
-          />
-
-          <Text style={styles.characterCount}>{name.length}/30 characters</Text>
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.continueButton,
-            { opacity: name.trim().length < 2 ? 0.5 : 1 },
-          ]}
-          onPress={handleContinue}
-          disabled={isLoading || name.trim().length < 2}
-        >
-          <Text style={styles.continueButtonText}>
-            {isLoading ? "Processing..." : "Continue"}
-          </Text>
-        </TouchableOpacity>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            You'll be able to change this later in your profile
-          </Text>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#000000",
+  },
+  keyboardView: {
+    flex: 1,
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 80,
+    paddingTop: 40,
     justifyContent: "space-between",
   },
   header: {
     alignItems: "center",
-    marginBottom: 40,
+    paddingTop: 60,
   },
   title: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#333",
-    marginBottom: 12,
+    color: "white",
+    marginBottom: 16,
     textAlign: "center",
   },
   subtitle: {
-    fontSize: 16,
-    color: "#666",
+    fontSize: 18,
+    color: "rgba(255, 255, 255, 0.8)",
     textAlign: "center",
-    lineHeight: 22,
+    lineHeight: 26,
+    paddingHorizontal: 20,
   },
   inputSection: {
     flex: 1,
     justifyContent: "center",
-    marginTop: -100,
+    paddingHorizontal: 8,
   },
   input: {
-    fontSize: 18,
-    padding: 20,
+    fontSize: 20,
+    padding: 24,
     borderWidth: 2,
-    borderColor: "#e1e5e9",
-    borderRadius: 12,
-    backgroundColor: "white",
+    borderColor: "#333333",
+    borderRadius: 16,
+    backgroundColor: "#1a1a1a",
     textAlign: "center",
-    color: "#333",
+    color: "white",
+    fontWeight: "500",
   },
   characterCount: {
     textAlign: "right",
-    marginTop: 8,
+    marginTop: 12,
     fontSize: 14,
-    color: "#999",
+    color: "rgba(255, 255, 255, 0.6)",
+  },
+  buttonSection: {
+    paddingBottom: 40,
   },
   continueButton: {
-    backgroundColor: "#667eea",
-    paddingVertical: 16,
+    backgroundColor: "white",
+    paddingVertical: 18,
     borderRadius: 12,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   continueButtonText: {
-    color: "white",
+    color: "black",
     fontSize: 18,
     fontWeight: "600",
   },
   footer: {
     alignItems: "center",
-    paddingBottom: 40,
   },
   footerText: {
     fontSize: 14,
-    color: "#999",
+    color: "rgba(255, 255, 255, 0.6)",
     textAlign: "center",
+    lineHeight: 20,
   },
 });

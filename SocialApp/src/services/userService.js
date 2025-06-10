@@ -2,7 +2,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebase';
 import { doc, setDoc, getDoc, collection, addDoc, updateDoc, increment } from 'firebase/firestore';
+
 const USER_STORAGE_KEY = '@PhotoGroupApp:user';
+const USER_PROFILE_KEY = '@PhotoGroupApp:user_profile';
+const GROUPS_STORAGE_KEY = 'user_groups';
+const ALL_GROUPS_STORAGE_KEY = 'all_groups';
 
 // Generate unique user ID
 const generateUserId = () => {
@@ -37,17 +41,23 @@ export const getUserLocally = async () => {
   }
 };
 
-// Create user in Firebase
-export const createUserInFirebase = async (name, groupId) => {
+// Create user in Firebase (updated for multiple groups support)
+export const createUserInFirebase = async (name, groupId = null) => {
   try {
     const userId = generateUserId();
     const userData = {
       id: userId,
       name: name,
-      groupId: groupId,
+      groupId: groupId, // Keep for backward compatibility
+      groups: groupId ? [groupId] : [], // New: support multiple groups
+      groupsPosted: [], // Track which groups user has posted in
       hasUploaded: false,
       joinedAt: new Date(),
-      totalPosts: 0
+      totalPosts: 0,
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString(),
+      groupCount: groupId ? 1 : 0,
+      activityLog: []
     };
 
     // Save to Firebase
@@ -64,18 +74,193 @@ export const createUserInFirebase = async (name, groupId) => {
   }
 };
 
-// Add this function to clear all test data
+// Update user data locally and optionally in Firebase
+export const updateUserLocally = async (updatedData, syncToFirebase = false) => {
+  try {
+    const currentUser = await getUserLocally();
+    if (!currentUser) {
+      throw new Error('No user found to update');
+    }
+
+    // Merge current user data with updates
+    const updatedUser = {
+      ...currentUser,
+      ...updatedData,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveUserLocally(updatedUser);
+
+    // Optionally sync to Firebase
+    if (syncToFirebase && currentUser.id) {
+      try {
+        const userRef = doc(db, 'users', currentUser.id);
+        await updateDoc(userRef, updatedData);
+        console.log('✅ User updated in Firebase');
+      } catch (firebaseError) {
+        console.warn('⚠️ Failed to sync to Firebase:', firebaseError);
+      }
+    }
+
+    console.log('✅ User updated locally');
+    return updatedUser;
+  } catch (error) {
+    console.error('❌ Error updating user locally:', error);
+    throw error;
+  }
+};
+
+// Add user to multiple groups support
+export const addUserToGroups = async (userId, groupIds) => {
+  try {
+    const currentUser = await getUserLocally();
+    if (currentUser && currentUser.id === userId) {
+      const currentGroups = currentUser.groups || [];
+      const newGroups = [...new Set([...currentGroups, ...groupIds])]; // Remove duplicates
+
+      await updateUserLocally({
+        groups: newGroups,
+        groupCount: newGroups.length,
+        lastActivity: new Date().toISOString()
+      }, true);
+
+      console.log('✅ User added to groups:', groupIds);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ Failed to add user to groups:', error);
+    return false;
+  }
+};
+
+// Remove user from group
+export const removeUserFromGroup = async (userId, groupId) => {
+  try {
+    const currentUser = await getUserLocally();
+    if (currentUser && currentUser.id === userId) {
+      const currentGroups = currentUser.groups || [];
+      const updatedGroups = currentGroups.filter(id => id !== groupId);
+
+      await updateUserLocally({
+        groups: updatedGroups,
+        groupCount: updatedGroups.length,
+        lastActivity: new Date().toISOString()
+      }, true);
+
+      console.log('✅ User removed from group:', groupId);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ Failed to remove user from group:', error);
+    return false;
+  }
+};
+
+// Track user activity
+export const updateUserActivity = async (activityType, data = {}) => {
+  try {
+    const currentUser = await getUserLocally();
+    if (!currentUser) return;
+
+    const activity = {
+      type: activityType,
+      timestamp: new Date().toISOString(),
+      data: data,
+    };
+
+    const activityLog = currentUser.activityLog || [];
+    activityLog.push(activity);
+
+    // Keep only last 50 activities to avoid storage bloat
+    const trimmedLog = activityLog.slice(-50);
+
+    await updateUserLocally({
+      lastActivity: new Date().toISOString(),
+      lastActivityType: activityType,
+      activityLog: trimmedLog
+    });
+
+    console.log('✅ User activity updated:', activityType);
+  } catch (error) {
+    console.error('❌ Error updating user activity:', error);
+  }
+};
+
+// Get user stats (for profile/overview screens)
+export const getUserStats = async () => {
+  try {
+    const user = await getUserLocally();
+    if (!user) return null;
+
+    return {
+      userId: user.id,
+      name: user.name,
+      memberSince: user.createdAt || user.joinedAt,
+      lastLogin: user.lastLogin,
+      groupCount: user.groupCount || (user.groups ? user.groups.length : 0),
+      totalPosts: user.totalPosts || 0,
+      hasUploaded: user.hasUploaded || false,
+      lastActivity: user.lastActivity,
+      totalActivities: user.activityLog ? user.activityLog.length : 0,
+      groups: user.groups || [],
+      groupsPosted: user.groupsPosted || [],
+    };
+  } catch (error) {
+    console.error('❌ Error getting user stats:', error);
+    return null;
+  }
+};
+
+// Validate user data
+export const validateUser = async () => {
+  try {
+    const user = await getUserLocally();
+    if (!user) {
+      return { isValid: false, reason: 'No user found' };
+    }
+
+    if (!user.name || !user.id) {
+      return { isValid: false, reason: 'Incomplete user data' };
+    }
+
+    return { isValid: true, user: user };
+  } catch (error) {
+    console.error('❌ Error validating user:', error);
+    return { isValid: false, reason: 'Validation error' };
+  }
+};
+
+// Enhanced function to clear all test data
 export const clearAllTestData = async () => {
   try {
-    console.log('🧹 Clearing all test data...');
+    console.log('🧹 Starting comprehensive data clear...');
 
-    // Clear local storage
-    await clearUserData();
+    // Get current user info for cleaning user-specific data
+    const currentUser = await getUserLocally();
+    console.log('Current user before clearing:', currentUser);
 
-    // Note: We can't easily delete Firebase data from the client for security reasons
-    // But we can ignore it by clearing local storage
+    // Clear all user-related storage
+    console.log('Clearing user data...');
+    const userDataCleared = await clearUserData();
+    console.log('User data cleared:', userDataCleared);
 
-    console.log('✅ All local test data cleared');
+    // Clear group-related data
+    console.log('Clearing group data...');
+    const groupDataCleared = await clearGroupData(currentUser?.id);
+    console.log('Group data cleared:', groupDataCleared);
+
+    // Clear any additional app data
+    console.log('Clearing app data...');
+    const appDataCleared = await clearAppData();
+    console.log('App data cleared:', appDataCleared);
+
+    // Verify everything is cleared
+    const verifyUser = await getUserLocally();
+    console.log('Verification - User after clearing:', verifyUser);
+
+    console.log('✅ All test data cleared successfully');
     return true;
   } catch (error) {
     console.error('❌ Failed to clear test data:', error);
@@ -83,21 +268,28 @@ export const clearAllTestData = async () => {
   }
 };
 
-// Clear user data (for testing)
+// Clear user data (enhanced for testing)
 export const clearUserData = async () => {
   try {
-    console.log('🧹 Starting clearUserData...');
+    console.log('🧹 Clearing user data...');
+
+    const keysToRemove = [
+      USER_STORAGE_KEY,
+      USER_PROFILE_KEY,
+    ];
 
     // Platform-specific clearing
     if (typeof window !== 'undefined' && window.localStorage) {
       // Web platform - use localStorage directly
-      console.log('🌐 Using web localStorage...');
-      window.localStorage.removeItem(USER_STORAGE_KEY);
+      console.log('🌐 Clearing web localStorage...');
+      keysToRemove.forEach(key => {
+        window.localStorage.removeItem(key);
+      });
       console.log('✅ Web localStorage cleared');
     } else {
       // Mobile platform - use AsyncStorage
-      console.log('📱 Using AsyncStorage...');
-      await AsyncStorage.removeItem(USER_STORAGE_KEY);
+      console.log('📱 Clearing AsyncStorage...');
+      await AsyncStorage.multiRemove(keysToRemove);
       console.log('✅ AsyncStorage cleared');
     }
 
@@ -105,6 +297,70 @@ export const clearUserData = async () => {
     return true;
   } catch (error) {
     console.error('❌ Failed to clear user data:', error);
+    return false;
+  }
+};
+
+// Clear group-related data
+export const clearGroupData = async (userId = null) => {
+  try {
+    console.log('🧹 Clearing group data...');
+
+    const groupKeysToRemove = [
+      ALL_GROUPS_STORAGE_KEY,
+    ];
+
+    // Add user-specific group keys if userId is provided
+    if (userId) {
+      groupKeysToRemove.push(`${GROUPS_STORAGE_KEY}_${userId}`);
+    }
+
+    // Platform-specific clearing
+    if (typeof window !== 'undefined' && window.localStorage) {
+      // Web platform
+      groupKeysToRemove.forEach(key => {
+        window.localStorage.removeItem(key);
+      });
+    } else {
+      // Mobile platform
+      await AsyncStorage.multiRemove(groupKeysToRemove);
+    }
+
+    console.log('✅ Group data cleared');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to clear group data:', error);
+    return false;
+  }
+};
+
+// Clear any additional app data
+export const clearAppData = async () => {
+  try {
+    console.log('🧹 Clearing additional app data...');
+
+    // Add any other storage keys your app might use
+    const additionalKeys = [
+      // Add other storage keys here if needed
+      // 'app_settings',
+      // 'cached_data',
+      // etc.
+    ];
+
+    if (additionalKeys.length > 0) {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        additionalKeys.forEach(key => {
+          window.localStorage.removeItem(key);
+        });
+      } else {
+        await AsyncStorage.multiRemove(additionalKeys);
+      }
+    }
+
+    console.log('✅ Additional app data cleared');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to clear app data:', error);
     return false;
   }
 };
@@ -167,6 +423,10 @@ export const addUserToGroup = async (groupId, userId) => {
           members: [...currentMembers, userId],
           memberCount: currentMembers.length + 1
         });
+
+        // Also update user's local groups list
+        await addUserToGroups(userId, [groupId]);
+
         console.log('✅ User added to group members');
       }
     }
@@ -190,11 +450,10 @@ export const updateUserUploadStatus = async (userId, hasUploaded = true) => {
     });
 
     // Also update local storage
-    const localUser = await getUserLocally();
-    if (localUser) {
-      localUser.hasUploaded = hasUploaded;
-      await saveUserLocally(localUser);
-    }
+    await updateUserLocally({
+      hasUploaded,
+      lastActive: new Date().toISOString()
+    });
 
     console.log('✅ User upload status updated');
     return true;
@@ -203,4 +462,3 @@ export const updateUserUploadStatus = async (userId, hasUploaded = true) => {
     return false;
   }
 };
-

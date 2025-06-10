@@ -8,46 +8,71 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Dimensions,
-  Animated,
+  SafeAreaView,
+  Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { getUserLocally } from "../../src/services/userService";
 import { getGroupPosts } from "../../src/services/postService";
 
+interface User {
+  id: string;
+  name: string;
+  groupsPosted?: string[]; // Array of group IDs where user has posted
+}
+
+interface Post {
+  id: string;
+  imageUrl: string;
+  caption: string;
+  authorId: string;
+  authorName: string;
+  createdAt: any;
+}
+
 export default function GroupFeedScreen() {
-  const [user, setUser] = useState<any>(null);
-  const [posts, setPosts] = useState<any[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const router = useRouter();
+  const params = useLocalSearchParams();
+
+  // Get group info from navigation params
+  const groupId = params.groupId as string;
+  const groupName = params.groupName as string;
 
   useEffect(() => {
     loadUserAndFeed();
-  }, []);
+  }, [groupId]);
 
   const loadUserAndFeed = async () => {
     try {
-      console.log("📱 Loading user and feed data...");
-
+      console.log("📱 Loading user and feed data for group:", groupId);
       const currentUser = await getUserLocally();
       setUser(currentUser);
 
-      if (currentUser) {
+      if (currentUser && groupId) {
         console.log("👤 User found:", currentUser.name);
-        console.log("📊 Has uploaded:", currentUser.hasUploaded);
+
+        // Check if user has posted in THIS specific group
+        const hasPostedInGroup =
+          currentUser.groupsPosted?.includes(groupId) || false;
+        console.log("📊 Has posted in this group:", hasPostedInGroup);
 
         // Always load the feed (for preview behind overlay)
-        const groupPosts = await getGroupPosts(currentUser.groupId);
+        const groupPosts = await getGroupPosts(groupId);
         setPosts(groupPosts);
 
-        // Show lock overlay if user hasn't uploaded
-        if (!currentUser.hasUploaded) {
+        // Show lock overlay if user hasn't posted in THIS group
+        if (!hasPostedInGroup) {
           setIsLocked(true);
-          console.log("🔒 Feed locked - user needs to upload first photo");
+          console.log(
+            "🔒 Feed locked - user needs to upload first photo to this group"
+          );
         } else {
           setIsLocked(false);
-          console.log("✅ Feed unlocked - user has uploaded");
+          console.log("✅ Feed unlocked - user has posted in this group");
         }
       }
     } catch (error) {
@@ -58,52 +83,88 @@ export default function GroupFeedScreen() {
   };
 
   const handleTakePhoto = () => {
-    console.log("📷 Going to camera...");
-    router.push("/screens/CameraScreen");
+    console.log("📷 Going to camera for group:", groupId);
+    router.push({
+      pathname: "/screens/CameraScreen",
+      params: { groupId, groupName },
+    });
+  };
+
+  const handleBackToGroups = () => {
+    router.back();
   };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#667eea" />
-        <Text style={styles.loadingText}>Loading your group feed...</Text>
+        <ActivityIndicator size="large" color="white" />
+        <Text style={styles.loadingText}>Loading feed...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Group Feed</Text>
-        <Text style={styles.groupCode}>Group: {user?.groupId}</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBackToGroups}
+        >
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <View style={styles.headerContent}>
+          <Text style={styles.groupName}>{groupName}</Text>
+          <Text style={styles.memberCount}>{posts.length} photos</Text>
+        </View>
         {!isLocked && (
-          <Text style={styles.memberName}>Welcome back, {user?.name}! 👋</Text>
+          <TouchableOpacity
+            style={styles.cameraHeaderButton}
+            onPress={handleTakePhoto}
+          >
+            <Text style={styles.cameraHeaderText}>📷</Text>
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* Feed Content (Always rendered, but may be covered by overlay) */}
+      {/* Feed Content */}
       <ScrollView
         style={[styles.feedContainer, isLocked && styles.blurredContent]}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={!isLocked} // Disable scrolling when locked
+        scrollEnabled={!isLocked}
       >
         {posts.length > 0 ? (
           posts.map((post, index) => (
             <View key={post.id || index} style={styles.postCard}>
+              {/* Post Header */}
+              <View style={styles.postHeader}>
+                <View style={styles.userInfo}>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>
+                      {post.authorId === user?.id
+                        ? "You"
+                        : post.authorName?.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.userDetails}>
+                    <Text style={styles.userName}>
+                      {post.authorId === user?.id ? "You" : post.authorName}
+                    </Text>
+                    <Text style={styles.postTime}>
+                      {post.createdAt
+                        ? new Date(post.createdAt.toDate()).toLocaleDateString()
+                        : "Recently"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Post Image */}
               <Image source={{ uri: post.imageUrl }} style={styles.postImage} />
+
+              {/* Post Content */}
               <View style={styles.postContent}>
                 <Text style={styles.postCaption}>{post.caption}</Text>
-                <View style={styles.postMeta}>
-                  <Text style={styles.postAuthor}>
-                    {post.authorId === user?.id ? "You" : post.authorName}
-                  </Text>
-                  <Text style={styles.postTime}>
-                    {post.createdAt
-                      ? new Date(post.createdAt.toDate()).toLocaleDateString()
-                      : "Recently"}
-                  </Text>
-                </View>
               </View>
             </View>
           ))
@@ -115,26 +176,8 @@ export default function GroupFeedScreen() {
             </Text>
           </View>
         )}
-
         <View style={styles.bottomPadding} />
       </ScrollView>
-
-      {/* Camera Button (only show when unlocked) */}
-      {!isLocked && (
-        <TouchableOpacity style={styles.cameraButton} onPress={handleTakePhoto}>
-          <Text style={styles.cameraButtonText}>📷</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Stats Bar (only show when unlocked) */}
-      {!isLocked && (
-        <View style={styles.statsBar}>
-          <Text style={styles.statsText}>
-            {posts.length} photos • {user?.groupId} • Your contributions:{" "}
-            {posts.filter((p) => p.authorId === user?.id).length}
-          </Text>
-        </View>
-      )}
 
       {/* Lock Overlay - Only shows when feed is locked */}
       {isLocked && (
@@ -147,7 +190,7 @@ export default function GroupFeedScreen() {
               </View>
 
               {/* Welcome Message */}
-              <Text style={styles.lockTitle}>Welcome to the group! 🎉</Text>
+              <Text style={styles.lockTitle}>Welcome to {groupName}! 🎉</Text>
               <Text style={styles.lockSubtitle}>Hi {user?.name}!</Text>
 
               {/* Explanation */}
@@ -155,10 +198,9 @@ export default function GroupFeedScreen() {
                 You can see there are already {posts.length} amazing photos
                 shared in this group!
               </Text>
-
               <Text style={styles.lockExplanation}>
                 To unlock the full feed and start interacting with your group,
-                you need to contribute your first photo.
+                you need to contribute your first photo to this group.
               </Text>
 
               {/* Take Photo Button */}
@@ -167,7 +209,7 @@ export default function GroupFeedScreen() {
                 onPress={handleTakePhoto}
               >
                 <Text style={styles.takePhotoButtonText}>
-                  📷 Take My First Photo!
+                  📷 Share Your First Photo!
                 </Text>
               </TouchableOpacity>
 
@@ -179,149 +221,180 @@ export default function GroupFeedScreen() {
           </View>
         </View>
       )}
-    </View>
+
+      {/* Floating Camera Button (only show when unlocked) */}
+      {!isLocked && (
+        <TouchableOpacity
+          style={styles.floatingCameraButton}
+          onPress={handleTakePhoto}
+        >
+          <Text style={styles.floatingCameraText}>+</Text>
+        </TouchableOpacity>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#000000",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#000000",
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
+    color: "rgba(255, 255, 255, 0.7)",
   },
   header: {
-    paddingTop: 60,
-    paddingHorizontal: 24,
-    paddingBottom: 20,
-    backgroundColor: "white",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: "#000000",
     borderBottomWidth: 1,
-    borderBottomColor: "#e1e5e9",
-    zIndex: 1,
+    borderBottomColor: "#333333",
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 4,
+  backButton: {
+    padding: 8,
   },
-  groupCode: {
+  backButtonText: {
+    color: "white",
     fontSize: 16,
-    color: "#667eea",
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-  memberName: {
-    fontSize: 16,
-    color: "#28a745",
     fontWeight: "500",
+  },
+  headerContent: {
+    flex: 1,
+    alignItems: "center",
+  },
+  groupName: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "white",
+    textAlign: "center",
+  },
+  memberCount: {
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.6)",
+    textAlign: "center",
+    marginTop: 2,
+  },
+  cameraHeaderButton: {
+    padding: 8,
+  },
+  cameraHeaderText: {
+    fontSize: 20,
   },
   feedContainer: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
   },
   blurredContent: {
-    opacity: 0.3, // Make content faded when locked
+    opacity: 0.3,
   },
   postCard: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    marginBottom: 16,
-    overflow: "hidden",
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    backgroundColor: "#000000",
+    marginBottom: 32,
   },
-  postImage: {
-    width: "100%",
-    height: 300,
-    backgroundColor: "#f0f0f0",
-  },
-  postContent: {
-    padding: 16,
-  },
-  postCaption: {
-    fontSize: 16,
-    color: "#333",
-    marginBottom: 12,
-    lineHeight: 22,
-  },
-  postMeta: {
+  postHeader: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  userInfo: {
+    flexDirection: "row",
     alignItems: "center",
   },
-  postAuthor: {
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#333333",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  avatarText: {
+    color: "white",
     fontSize: 14,
-    color: "#667eea",
     fontWeight: "600",
+  },
+  userDetails: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "white",
   },
   postTime: {
     fontSize: 12,
-    color: "#999",
+    color: "rgba(255, 255, 255, 0.6)",
+    marginTop: 2,
+  },
+  postImage: {
+    width: "100%",
+    height: 400,
+    backgroundColor: "#1a1a1a",
+  },
+  postContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  postCaption: {
+    fontSize: 14,
+    color: "white",
+    lineHeight: 20,
   },
   emptyState: {
     alignItems: "center",
     paddingVertical: 60,
+    paddingHorizontal: 32,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
+    color: "white",
+    marginBottom: 12,
+    textAlign: "center",
   },
   emptySubtitle: {
     fontSize: 16,
-    color: "#666",
+    color: "rgba(255, 255, 255, 0.7)",
     textAlign: "center",
+    lineHeight: 24,
   },
   bottomPadding: {
     height: 100,
   },
-  cameraButton: {
+  floatingCameraButton: {
     position: "absolute",
-    bottom: 90,
-    right: 24,
-    width: 60,
-    height: 60,
-    backgroundColor: "#667eea",
-    borderRadius: 30,
+    bottom: 30,
+    right: 20,
+    width: 56,
+    height: 56,
+    backgroundColor: "white",
+    borderRadius: 28,
     justifyContent: "center",
     alignItems: "center",
-    elevation: 6,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  cameraButtonText: {
+  floatingCameraText: {
     fontSize: 24,
+    color: "black",
+    fontWeight: "300",
   },
-  statsBar: {
-    backgroundColor: "white",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderTopWidth: 1,
-    borderTopColor: "#e1e5e9",
-  },
-  statsText: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-  },
-
   // Lock Overlay Styles
   lockOverlay: {
     position: "absolute",
@@ -329,7 +402,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(255, 255, 255, 0.95)", // Almost opaque white
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
@@ -339,22 +412,17 @@ const styles = StyleSheet.create({
     maxWidth: 400,
   },
   lockCard: {
-    backgroundColor: "white",
+    backgroundColor: "#1a1a1a",
     borderRadius: 24,
-    padding: 40,
+    padding: 32,
     alignItems: "center",
-    elevation: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    borderWidth: 2,
-    borderColor: "#667eea",
+    borderWidth: 1,
+    borderColor: "#333333",
   },
   lockIcon: {
     width: 80,
     height: 80,
-    backgroundColor: "#667eea",
+    backgroundColor: "#333333",
     borderRadius: 40,
     justifyContent: "center",
     alignItems: "center",
@@ -364,50 +432,50 @@ const styles = StyleSheet.create({
     fontSize: 36,
   },
   lockTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
+    color: "white",
     marginBottom: 8,
     textAlign: "center",
   },
   lockSubtitle: {
-    fontSize: 20,
-    color: "#667eea",
+    fontSize: 18,
+    color: "rgba(255, 255, 255, 0.8)",
     fontWeight: "600",
     marginBottom: 20,
     textAlign: "center",
   },
   lockMessage: {
     fontSize: 16,
-    color: "#555",
+    color: "rgba(255, 255, 255, 0.7)",
     marginBottom: 16,
     textAlign: "center",
     lineHeight: 22,
   },
   lockExplanation: {
     fontSize: 16,
-    color: "#666",
+    color: "rgba(255, 255, 255, 0.6)",
     marginBottom: 32,
     textAlign: "center",
     lineHeight: 22,
   },
   takePhotoButton: {
-    backgroundColor: "#667eea",
-    paddingVertical: 18,
+    backgroundColor: "white",
+    paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 16,
+    borderRadius: 12,
     alignItems: "center",
     marginBottom: 20,
     minWidth: 250,
   },
   takePhotoButtonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
+    color: "black",
+    fontSize: 16,
+    fontWeight: "600",
   },
   previewHint: {
     fontSize: 14,
-    color: "#999",
+    color: "rgba(255, 255, 255, 0.5)",
     textAlign: "center",
     fontStyle: "italic",
   },

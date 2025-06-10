@@ -9,8 +9,10 @@ import {
   Platform,
   Dimensions,
   ActivityIndicator,
+  SafeAreaView,
+  Image,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import { getUserLocally } from "../../src/services/userService";
@@ -22,9 +24,19 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>("back");
   const [isLoading, setIsLoading] = useState(false);
-  const [isFirstUpload, setIsFirstUpload] = useState(false);
+  const [isFirstPostInGroup, setIsFirstPostInGroup] = useState(false);
+  const [captureMode, setCaptureMode] = useState<
+    "ready" | "capturing" | "front"
+  >("ready");
+  const [backPhoto, setBackPhoto] = useState<string | null>(null);
+  const [frontPhoto, setFrontPhoto] = useState<string | null>(null);
   const cameraRef = useRef<CameraView>(null);
   const router = useRouter();
+
+  // Get group info from navigation params
+  const params = useLocalSearchParams();
+  const groupId = params.groupId as string;
+  const groupName = params.groupName as string;
 
   useEffect(() => {
     loadUserInfo();
@@ -32,49 +44,83 @@ export default function CameraScreen() {
 
   const loadUserInfo = async () => {
     try {
-      // Load user info
       const currentUser = await getUserLocally();
       setUser(currentUser);
 
-      if (currentUser && !currentUser.hasUploaded) {
-        setIsFirstUpload(true);
-        console.log("📷 First upload for user:", currentUser.name);
+      if (currentUser && groupId) {
+        // Check if user has posted in this specific group
+        const groupsPosted = currentUser.groupsPosted || [];
+        const hasPostedInGroup = groupsPosted.includes(groupId);
+        setIsFirstPostInGroup(!hasPostedInGroup);
+
+        console.log("📷 Camera for group:", groupName);
+        console.log("🔍 First post in this group:", !hasPostedInGroup);
       }
     } catch (error) {
       console.error("❌ Error loading user:", error);
     }
   };
 
-  const takePicture = async () => {
+  const takeDualPhoto = async () => {
     if (!cameraRef.current) {
       Alert.alert("Error", "Camera not ready");
       return;
     }
 
     setIsLoading(true);
-    try {
-      console.log("📸 Taking picture...");
+    setCaptureMode("capturing");
 
-      const photo = await cameraRef.current.takePictureAsync({
+    try {
+      console.log("📸 Starting dual camera capture...");
+
+      // Step 1: Take back camera photo
+      setFacing("back");
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Wait for camera to switch
+
+      const backCameraPhoto = await cameraRef.current.takePictureAsync({
         quality: 0.8,
         base64: false,
       });
 
-      console.log("✅ Picture taken:", photo?.uri);
+      if (backCameraPhoto?.uri) {
+        setBackPhoto(backCameraPhoto.uri);
+        console.log("✅ Back camera photo taken");
 
-      if (photo?.uri) {
-        // Navigate to caption screen with photo
-        router.push({
-          pathname: "/screens/CaptionScreen",
-          params: {
-            imageUri: photo.uri,
-            isFirstUpload: isFirstUpload.toString(),
-          },
+        // Step 2: Switch to front camera
+        setFacing("front");
+        setCaptureMode("front");
+        await new Promise((resolve) => setTimeout(resolve, 500)); // Wait for camera to switch
+
+        // Step 3: Take front camera photo
+        const frontCameraPhoto = await cameraRef.current.takePictureAsync({
+          quality: 0.8,
+          base64: false,
         });
+
+        if (frontCameraPhoto?.uri) {
+          setFrontPhoto(frontCameraPhoto.uri);
+          console.log("✅ Front camera photo taken");
+
+          // Navigate to caption screen with both photos
+          router.push({
+            pathname: "/screens/CaptionScreen",
+            params: {
+              imageUri: backCameraPhoto.uri, // Main image
+              frontImageUri: frontCameraPhoto.uri, // Overlay image
+              groupId: groupId,
+              groupName: groupName,
+            },
+          });
+        }
       }
     } catch (error) {
-      console.error("❌ Error taking picture:", error);
-      Alert.alert("Error", "Failed to take picture. Please try again.");
+      console.error("❌ Error taking dual photo:", error);
+      Alert.alert("Error", "Failed to take photos. Please try again.");
+      // Reset state
+      setBackPhoto(null);
+      setFrontPhoto(null);
+      setCaptureMode("ready");
+      setFacing("back");
     } finally {
       setIsLoading(false);
     }
@@ -99,7 +145,8 @@ export default function CameraScreen() {
           pathname: "/screens/CaptionScreen",
           params: {
             imageUri: result.assets[0].uri,
-            isFirstUpload: isFirstUpload.toString(),
+            groupId: groupId,
+            groupName: groupName,
           },
         });
       }
@@ -111,25 +158,15 @@ export default function CameraScreen() {
     }
   };
 
-  const toggleCameraFacing = () => {
-    setFacing((current) => (current === "back" ? "front" : "back"));
-  };
-
   const goBack = () => {
-    if (isFirstUpload) {
-      // First upload users must take a photo - go back to feed (locked)
-      router.back();
-    } else {
-      // Returning users can go back to feed
-      router.back();
-    }
+    router.back();
   };
 
   // Permission loading state
   if (!permission) {
     return (
       <View style={styles.permissionContainer}>
-        <ActivityIndicator size="large" color="#667eea" />
+        <ActivityIndicator size="large" color="white" />
         <Text style={styles.permissionText}>Loading camera...</Text>
       </View>
     );
@@ -138,59 +175,95 @@ export default function CameraScreen() {
   // Permission denied
   if (!permission.granted) {
     return (
-      <View style={styles.permissionContainer}>
-        <Text style={styles.permissionTitle}>Camera Access Needed</Text>
-        <Text style={styles.permissionMessage}>
-          This app needs camera access to let you take photos for your group.
-        </Text>
-        <TouchableOpacity
-          style={styles.permissionButton}
-          onPress={requestPermission}
-        >
-          <Text style={styles.permissionButtonText}>Grant Permission</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.galleryButton}
-          onPress={selectFromGallery}
-        >
-          <Text style={styles.galleryButtonText}>
-            Choose from Gallery Instead
+      <SafeAreaView style={styles.permissionContainer}>
+        <View style={styles.permissionContent}>
+          <Text style={styles.permissionTitle}>Camera Access Needed</Text>
+          <Text style={styles.permissionMessage}>
+            This app needs camera access to let you take photos for your group.
           </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.permissionButton}
+            onPress={requestPermission}
+          >
+            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.galleryButton}
+            onPress={selectFromGallery}
+          >
+            <Text style={styles.galleryButtonText}>
+              Choose from Gallery Instead
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={goBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {isFirstUpload ? "First Photo!" : "Take Photo"}
-        </Text>
-        <TouchableOpacity
-          style={styles.flipButton}
-          onPress={toggleCameraFacing}
-        >
-          <Text style={styles.flipButtonText}>🔄</Text>
-        </TouchableOpacity>
-      </View>
+      <SafeAreaView style={styles.headerSafe}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={goBack}>
+            <Text style={styles.backButtonText}>✕</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>
+              {isFirstPostInGroup ? "First Photo!" : "BeYou Moment"}
+            </Text>
+            <Text style={styles.groupName}>{groupName}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.galleryHeaderButton}
+            onPress={selectFromGallery}
+          >
+            <Text style={styles.galleryHeaderText}>📁</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
 
       {/* Camera View */}
       <View style={styles.cameraContainer}>
         <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-          {/* First Upload Overlay Message */}
-          {isFirstUpload && (
-            <View style={styles.firstUploadOverlay}>
-              <Text style={styles.firstUploadText}>
-                Welcome {user?.name}! 👋
-              </Text>
-              <Text style={styles.firstUploadSubtext}>
-                Take your first photo to unlock the group feed
-              </Text>
+          {/* Capture Progress Indicator */}
+          {captureMode !== "ready" && (
+            <View style={styles.captureProgressOverlay}>
+              <View style={styles.progressCard}>
+                {captureMode === "capturing" && (
+                  <>
+                    <ActivityIndicator size="large" color="white" />
+                    <Text style={styles.progressText}>
+                      Taking back photo...
+                    </Text>
+                  </>
+                )}
+                {captureMode === "front" && (
+                  <>
+                    <Text style={styles.progressEmoji}>📸</Text>
+                    <Text style={styles.progressText}>
+                      Now taking front photo...
+                    </Text>
+                    <Text style={styles.progressSubtext}>
+                      Look at the camera!
+                    </Text>
+                  </>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* First Upload Welcome */}
+          {isFirstPostInGroup && captureMode === "ready" && (
+            <View style={styles.welcomeOverlay}>
+              <View style={styles.welcomeCard}>
+                <Text style={styles.welcomeText}>
+                  Welcome to {groupName}! 👋
+                </Text>
+                <Text style={styles.welcomeSubtext}>
+                  Take your first BeYou moment to unlock this group's feed
+                </Text>
+              </View>
             </View>
           )}
         </CameraView>
@@ -198,48 +271,29 @@ export default function CameraScreen() {
 
       {/* Controls */}
       <View style={styles.controls}>
-        {/* Gallery Button */}
-        <TouchableOpacity
-          style={styles.galleryControlButton}
-          onPress={selectFromGallery}
-          disabled={isLoading}
-        >
-          <Text style={styles.controlButtonText}>📁</Text>
-        </TouchableOpacity>
+        <Text style={styles.instructionsText}>
+          {captureMode === "ready"
+            ? "Tap to capture front & back camera"
+            : "Taking BeYou moment..."}
+        </Text>
 
-        {/* Capture Button */}
         <TouchableOpacity
           style={[
             styles.captureButton,
-            isLoading && styles.captureButtonDisabled,
+            (isLoading || captureMode !== "ready") &&
+              styles.captureButtonDisabled,
           ]}
-          onPress={takePicture}
-          disabled={isLoading}
+          onPress={takeDualPhoto}
+          disabled={isLoading || captureMode !== "ready"}
         >
           {isLoading ? (
-            <ActivityIndicator color="white" size="large" />
+            <ActivityIndicator color="black" size="large" />
           ) : (
             <View style={styles.captureButtonInner} />
           )}
         </TouchableOpacity>
 
-        {/* Flip Camera Button */}
-        <TouchableOpacity
-          style={styles.flipControlButton}
-          onPress={toggleCameraFacing}
-          disabled={isLoading}
-        >
-          <Text style={styles.controlButtonText}>🔄</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Instructions */}
-      <View style={styles.instructionsContainer}>
-        <Text style={styles.instructionsText}>
-          {isFirstUpload
-            ? "This will unlock your group feed!"
-            : "Add another photo to your group"}
-        </Text>
+        <Text style={styles.beyouText}>BeYou</Text>
       </View>
     </View>
   );
@@ -248,43 +302,46 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#000000",
   },
   permissionContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#000000",
     paddingHorizontal: 24,
+  },
+  permissionContent: {
+    alignItems: "center",
   },
   permissionTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
+    color: "white",
     marginBottom: 16,
     textAlign: "center",
   },
   permissionText: {
     fontSize: 16,
-    color: "#666",
+    color: "rgba(255, 255, 255, 0.7)",
     marginTop: 16,
   },
   permissionMessage: {
     fontSize: 16,
-    color: "#666",
+    color: "rgba(255, 255, 255, 0.8)",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 32,
   },
   permissionButton: {
-    backgroundColor: "#667eea",
+    backgroundColor: "white",
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 12,
     marginBottom: 16,
   },
   permissionButtonText: {
-    color: "white",
+    color: "black",
     fontSize: 18,
     fontWeight: "600",
   },
@@ -294,107 +351,148 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#667eea",
+    borderColor: "#333333",
   },
   galleryButtonText: {
-    color: "#667eea",
+    color: "white",
     fontSize: 16,
     fontWeight: "600",
+  },
+  headerSafe: {
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 60,
     paddingHorizontal: 20,
-    paddingBottom: 20,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    paddingVertical: 16,
   },
   backButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
   },
   backButtonText: {
     color: "white",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 20,
+    fontWeight: "300",
+  },
+  headerCenter: {
+    alignItems: "center",
   },
   headerTitle: {
     color: "white",
     fontSize: 18,
     fontWeight: "bold",
   },
-  flipButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+  groupName: {
+    color: "rgba(255, 255, 255, 0.7)",
+    fontSize: 12,
+    marginTop: 2,
   },
-  flipButtonText: {
-    fontSize: 20,
+  galleryHeaderButton: {
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  galleryHeaderText: {
+    fontSize: 18,
   },
   cameraContainer: {
     flex: 1,
-    overflow: "hidden",
   },
   camera: {
     flex: 1,
   },
-  firstUploadOverlay: {
+  captureProgressOverlay: {
     position: "absolute",
-    top: 40,
-    left: 20,
-    right: 20,
-    backgroundColor: "rgba(102, 126, 234, 0.9)",
-    padding: 16,
-    borderRadius: 12,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  firstUploadText: {
+  progressCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    padding: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  progressEmoji: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  progressText: {
     color: "white",
     fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-    marginBottom: 4,
+    marginTop: 16,
   },
-  firstUploadSubtext: {
-    color: "white",
+  progressSubtext: {
+    color: "rgba(255, 255, 255, 0.8)",
     fontSize: 14,
     textAlign: "center",
+    marginTop: 8,
+  },
+  welcomeOverlay: {
+    position: "absolute",
+    top: 80,
+    left: 20,
+    right: 20,
+  },
+  welcomeCard: {
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  welcomeText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  welcomeSubtext: {
+    color: "rgba(255, 255, 255, 0.8)",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
   },
   controls: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
     paddingVertical: 40,
     paddingHorizontal: 20,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-  },
-  galleryControlButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
-    justifyContent: "center",
     alignItems: "center",
   },
-  flipControlButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  controlButtonText: {
-    fontSize: 20,
+  instructionsText: {
+    color: "rgba(255, 255, 255, 0.8)",
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 24,
   },
   captureButton: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: "#667eea",
+    backgroundColor: "white",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 4,
-    borderColor: "white",
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
   captureButtonDisabled: {
     opacity: 0.6,
@@ -403,17 +501,12 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "white",
+    backgroundColor: "black",
   },
-  instructionsContainer: {
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    alignItems: "center",
-  },
-  instructionsText: {
-    color: "white",
+  beyouText: {
+    color: "rgba(255, 255, 255, 0.6)",
     fontSize: 16,
-    textAlign: "center",
+    fontWeight: "600",
+    letterSpacing: 2,
   },
 });

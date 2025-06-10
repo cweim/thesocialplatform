@@ -29,15 +29,13 @@ export default function WelcomeScreen() {
     const checkUserAndNavigate = async () => {
       try {
         console.log("🔄 Welcome screen: Checking for existing user...");
-
         // Wait for 3 seconds to show splash
         await new Promise((resolve) => setTimeout(resolve, 3000));
-
         const existingUser = await getUserLocally();
-
         if (existingUser) {
           console.log("✅ Existing user found:", existingUser.name);
-          router.replace("/screens/GroupFeedScreen");
+          // Navigate to groups overview instead of directly to group feed
+          router.replace("/screens/GroupsOverviewScreen");
         } else {
           console.log("ℹ️ No existing user, go to name entry");
           // New user, go to name entry
@@ -71,7 +69,7 @@ export default function WelcomeScreen() {
               },
         ]}
       >
-        <Text style={styles.appName}>PhotoSync</Text>
+        <Text style={styles.appName}>BeYou</Text>
         <Text style={styles.tagline}>Share moments with your group</Text>
         <View style={styles.loadingDots}>
           <Text style={styles.dots}>• • •</Text>
@@ -84,7 +82,7 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#667eea",
+    backgroundColor: "#000000",
     justifyContent: "center",
     alignItems: "center",
   },
