@@ -28,12 +28,14 @@ export default function CaptionScreen() {
   const [caption, setCaption] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+  const [isMainImageFront, setIsMainImageFront] = useState(false);
   const router = useRouter();
-  const { imageUri, groupId, groupName } = useLocalSearchParams();
+  const { imageUri, frontImageUri, groupId, groupName } =
+    useLocalSearchParams();
 
   const handleSubmit = async () => {
-    if (!imageUri) {
-      alert("No image selected");
+    if (!imageUri || !frontImageUri) {
+      alert("No images selected");
       return;
     }
     if (caption.trim().length === 0) {
@@ -57,19 +59,21 @@ export default function CaptionScreen() {
 
       console.log("👤 User:", user.name, "Group:", groupId);
       console.log("📝 Caption:", caption.trim());
-      console.log("🖼️ Image URI:", imageUri);
+      console.log("🖼️ Main Image URI:", imageUri);
+      console.log("🖼️ Front Image URI:", frontImageUri);
 
       // Check if this is user's first post in this group
       const groupsPosted = user.groupsPosted || [];
       const isFirstPostInGroup = !groupsPosted.includes(groupId as string);
 
-      // Create the post (this handles image upload + database entry)
+      // Create the post with both images
       const newPost = await createPost(
         imageUri as string,
         caption.trim(),
         user.name,
         user.id,
-        groupId as string
+        groupId as string,
+        frontImageUri as string
       );
 
       if (!newPost) {
@@ -131,17 +135,7 @@ export default function CaptionScreen() {
   };
 
   const handleCancel = () => {
-    if (typeof window !== "undefined") {
-      const shouldDiscard = window.confirm(
-        "Discard Photo?\n\nAre you sure you want to go back? Your photo will be lost."
-      );
-      if (shouldDiscard) {
-        router.back();
-      }
-    } else {
-      // Mobile fallback
-      router.back();
-    }
+    router.back();
   };
 
   const goToFeedNow = () => {
@@ -169,6 +163,10 @@ export default function CaptionScreen() {
   React.useEffect(() => {
     checkIsFirstPostInGroup().then(setIsFirstPostInGroup);
   }, [groupId]);
+
+  const toggleImages = () => {
+    setIsMainImageFront(!isMainImageFront);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -208,7 +206,27 @@ export default function CaptionScreen() {
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Image Preview */}
           <View style={styles.imageContainer}>
-            <Image source={{ uri: imageUri as string }} style={styles.image} />
+            <TouchableOpacity onPress={toggleImages} activeOpacity={0.9}>
+              <Image
+                source={{
+                  uri: isMainImageFront
+                    ? (frontImageUri as string)
+                    : (imageUri as string),
+                }}
+                style={styles.image}
+              />
+              {/* Small overlay image */}
+              <View style={styles.overlayContainer}>
+                <Image
+                  source={{
+                    uri: isMainImageFront
+                      ? (imageUri as string)
+                      : (frontImageUri as string),
+                  }}
+                  style={styles.overlayImage}
+                />
+              </View>
+            </TouchableOpacity>
             {isFirstPostInGroup && (
               <View style={styles.firstUploadBadge}>
                 <Text style={styles.firstUploadBadgeText}>🎉 First Photo!</Text>
@@ -358,7 +376,7 @@ const styles = StyleSheet.create({
   },
   image: {
     width: "100%",
-    height: width * 0.75, // 4:3 aspect ratio
+    height: width * 1.2, // Increased from 0.75 to 1.2 for a taller image
     borderRadius: 12,
     backgroundColor: "#1a1a1a",
   },
@@ -508,5 +526,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "rgba(255, 255, 255, 0.6)",
     textAlign: "center",
+  },
+  overlayContainer: {
+    position: "absolute",
+    top: 16,
+    left: 16,
+    width: 120,
+    height: 160,
+    borderRadius: 12,
+    overflow: "hidden",
+    borderWidth: 2,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  overlayImage: {
+    width: "100%",
+    height: "100%",
   },
 });

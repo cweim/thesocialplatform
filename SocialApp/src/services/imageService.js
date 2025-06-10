@@ -28,6 +28,7 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
     console.log('📂 Upload path:', imagePath);
 
     // Convert image URI to blob and validate
+    console.log('🔄 Converting image to blob...');
     const blob = await uriToBlob(imageUri);
     validateImageBlob(blob);
 
@@ -47,12 +48,18 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
       }
     };
 
+    console.log('📤 Uploading to Firebase...');
     const snapshot = await uploadBytes(imageRef, blob, metadata);
     console.log('✅ Upload completed');
 
     // Get download URL
+    console.log('🔗 Generating download URL...');
     const downloadURL = await getDownloadURL(snapshot.ref);
-    console.log('🔗 Download URL generated');
+    console.log('✅ Download URL generated');
+
+    if (!downloadURL) {
+      throw new Error('Failed to generate download URL');
+    }
 
     return {
       downloadURL,
@@ -64,7 +71,17 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
     };
   } catch (error) {
     console.error('❌ Image upload failed:', error);
-    throw error; // Re-throw for better error handling in calling code
+    if (error.code === 'storage/unauthorized') {
+      throw new Error('Unauthorized to upload image. Please check your permissions.');
+    } else if (error.code === 'storage/canceled') {
+      throw new Error('Upload was canceled.');
+    } else if (error.code === 'storage/retry-limit-exceeded') {
+      throw new Error('Upload failed after multiple retries. Please check your internet connection.');
+    } else if (error.code === 'storage/invalid-checksum') {
+      throw new Error('Image upload failed due to corruption. Please try again.');
+    } else {
+      throw new Error(`Failed to upload image: ${error.message}`);
+    }
   }
 };
 
@@ -81,10 +98,16 @@ export const uploadDualImages = async (mainImageUri, frontImageUri, groupId, use
 
     // Always upload main image
     results.main = await uploadImage(mainImageUri, groupId, userId, 'main');
+    if (!results.main?.downloadURL) {
+      throw new Error('Main image upload failed');
+    }
 
     // Upload front image if provided
     if (frontImageUri) {
       results.front = await uploadImage(frontImageUri, groupId, userId, 'front');
+      if (!results.front?.downloadURL) {
+        throw new Error('Front image upload failed');
+      }
 
       // Create composite image (optional - for BeReal-style display)
       try {
@@ -206,16 +229,46 @@ const canvasToBlob = (canvas, type, quality) => {
 // Convert image URI to blob with validation
 const uriToBlob = async (imageUri) => {
   try {
-    const response = await fetch(imageUri);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image: ${response.status}`);
+    console.log('🔄 Converting URI to blob:', imageUri);
+
+    // Handle data URLs
+    if (imageUri.startsWith('data:')) {
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      console.log('✅ Data URL converted to blob');
+      return blob;
     }
 
-    const blob = await response.blob();
-    return blob;
+    // Handle file:// URLs
+    if (imageUri.startsWith('file://')) {
+      console.log('📁 Handling file:// URL');
+      const response = await fetch(imageUri);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      console.log('✅ File URL converted to blob');
+      return blob;
+    }
+
+    // Handle http(s) URLs
+    if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+      console.log('🌐 Handling http(s) URL');
+      const response = await fetch(imageUri);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      console.log('✅ HTTP URL converted to blob');
+      return blob;
+    }
+
+    throw new Error('Unsupported image URI format');
   } catch (error) {
     console.error('❌ Failed to convert URI to blob:', error);
-    throw new Error('Failed to process image data');
+    console.error('URI type:', typeof imageUri);
+    console.error('URI length:', imageUri?.length);
+    throw new Error(`Failed to process image data: ${error.message}`);
   }
 };
 

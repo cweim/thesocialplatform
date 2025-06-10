@@ -29,7 +29,7 @@ export default function JoinGroupScreen() {
   const [modalConfig, setModalConfig] = useState({
     title: "",
     message: "",
-    type: "info" as const,
+    type: "info" as "info" | "error",
   });
 
   React.useEffect(() => {
@@ -67,12 +67,16 @@ export default function JoinGroupScreen() {
 
     setLoading(true);
     try {
-      await joinGroup(user.id, groupCode.trim());
-      showModal("Success!", `You've successfully joined the group!`, "info");
-      setTimeout(() => {
-        setModalVisible(false);
-        router.back();
-      }, 1500);
+      const success = await joinGroup(user.id, groupCode.trim());
+      if (success) {
+        showModal("Success!", `You've successfully joined the group!`, "info");
+        setTimeout(() => {
+          setModalVisible(false);
+          router.back();
+        }, 1500);
+      } else {
+        showModal("Error", "Failed to join group. Please try again.", "error");
+      }
     } catch (error: any) {
       console.error("Error joining group:", error);
       let errorMessage = "Failed to join group. Please try again.";

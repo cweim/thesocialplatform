@@ -83,7 +83,12 @@ export const createGroup = async (
   description: string
 ): Promise<Group> => {
   try {
-    const groupId = 'group_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    // Generate a 6-character code using alphanumeric characters
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let groupId = '';
+    for (let i = 0; i < 6; i++) {
+      groupId += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
 
     const groupData: Group = {
       id: groupId,

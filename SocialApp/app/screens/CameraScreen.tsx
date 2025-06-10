@@ -16,6 +16,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import { getUserLocally } from "../../src/services/userService";
+import { showAlert } from "../../src/utils/alert";
 
 const { width, height } = Dimensions.get("window");
 
@@ -26,7 +27,7 @@ export default function CameraScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isFirstPostInGroup, setIsFirstPostInGroup] = useState(false);
   const [captureMode, setCaptureMode] = useState<
-    "ready" | "capturing" | "front"
+    "ready" | "capturing" | "second"
   >("ready");
   const [backPhoto, setBackPhoto] = useState<string | null>(null);
   const [frontPhoto, setFrontPhoto] = useState<string | null>(null);
@@ -37,6 +38,10 @@ export default function CameraScreen() {
   const params = useLocalSearchParams();
   const groupId = params.groupId as string;
   const groupName = params.groupName as string;
+
+  const [firstCameraUsed, setFirstCameraUsed] = useState<CameraType | null>(
+    null
+  );
 
   useEffect(() => {
     loadUserInfo();
@@ -63,64 +68,88 @@ export default function CameraScreen() {
 
   const takeDualPhoto = async () => {
     if (!cameraRef.current) {
-      Alert.alert("Error", "Camera not ready");
+      showAlert("Error", "Camera not ready");
       return;
     }
 
+    // Determine which camera to use first based on current facing
+    const firstCamera = facing;
+    const secondCamera = facing === "back" ? "front" : "back";
+
+    // Set this BEFORE starting the capture process
+    setFirstCameraUsed(firstCamera);
     setIsLoading(true);
     setCaptureMode("capturing");
 
     try {
       console.log("📸 Starting dual camera capture...");
+      console.log("🎯 First camera:", firstCamera);
 
-      // Step 1: Take back camera photo
-      setFacing("back");
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Wait for camera to switch
-
-      const backCameraPhoto = await cameraRef.current.takePictureAsync({
+      // Step 1: Take first photo with current camera
+      const firstPhoto = await cameraRef.current.takePictureAsync({
         quality: 0.8,
         base64: false,
       });
 
-      if (backCameraPhoto?.uri) {
-        setBackPhoto(backCameraPhoto.uri);
-        console.log("✅ Back camera photo taken");
+      if (firstPhoto?.uri) {
+        if (firstCamera === "back") {
+          setBackPhoto(firstPhoto.uri);
+        } else {
+          setFrontPhoto(firstPhoto.uri);
+        }
+        console.log(`✅ ${firstCamera} camera photo taken`);
 
-        // Step 2: Switch to front camera
-        setFacing("front");
-        setCaptureMode("front");
-        await new Promise((resolve) => setTimeout(resolve, 500)); // Wait for camera to switch
+        // Step 2: Switch to second camera
+        console.log("🔄 Switching to:", secondCamera);
+        setFacing(secondCamera);
+        setCaptureMode("second");
 
-        // Step 3: Take front camera photo
-        const frontCameraPhoto = await cameraRef.current.takePictureAsync({
+        // Wait for camera to initialize
+        console.log("⏳ Waiting for camera to initialize...");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Step 3: Take second photo
+        console.log("📸 Taking second photo...");
+        const secondPhoto = await cameraRef.current.takePictureAsync({
           quality: 0.8,
           base64: false,
         });
 
-        if (frontCameraPhoto?.uri) {
-          setFrontPhoto(frontCameraPhoto.uri);
-          console.log("✅ Front camera photo taken");
+        if (secondPhoto?.uri) {
+          console.log("✅ Second photo taken successfully");
+          if (secondCamera === "back") {
+            setBackPhoto(secondPhoto.uri);
+          } else {
+            setFrontPhoto(secondPhoto.uri);
+          }
 
           // Navigate to caption screen with both photos
+          console.log("🔄 Navigating to caption screen...");
           router.push({
             pathname: "/screens/CaptionScreen",
             params: {
-              imageUri: backCameraPhoto.uri, // Main image
-              frontImageUri: frontCameraPhoto.uri, // Overlay image
+              imageUri:
+                firstCamera === "back" ? firstPhoto.uri : secondPhoto.uri,
+              frontImageUri:
+                firstCamera === "front" ? firstPhoto.uri : secondPhoto.uri,
               groupId: groupId,
               groupName: groupName,
             },
           });
+        } else {
+          console.log("❌ Second photo capture failed");
+          throw new Error("Failed to capture second photo");
         }
       }
     } catch (error) {
       console.error("❌ Error taking dual photo:", error);
-      Alert.alert("Error", "Failed to take photos. Please try again.");
+      showAlert("Error", "Failed to take photos. Please try again.");
       // Reset state
       setBackPhoto(null);
       setFrontPhoto(null);
       setCaptureMode("ready");
       setFacing("back");
+      setFirstCameraUsed(null);
     } finally {
       setIsLoading(false);
     }
@@ -152,7 +181,7 @@ export default function CameraScreen() {
       }
     } catch (error) {
       console.error("❌ Error selecting image:", error);
-      Alert.alert("Error", "Failed to select image. Please try again.");
+      showAlert("Error", "Failed to select image. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -160,6 +189,10 @@ export default function CameraScreen() {
 
   const goBack = () => {
     router.back();
+  };
+
+  const toggleCamera = () => {
+    setFacing((current) => (current === "back" ? "front" : "back"));
   };
 
   // Permission loading state
@@ -230,25 +263,7 @@ export default function CameraScreen() {
           {captureMode !== "ready" && (
             <View style={styles.captureProgressOverlay}>
               <View style={styles.progressCard}>
-                {captureMode === "capturing" && (
-                  <>
-                    <ActivityIndicator size="large" color="white" />
-                    <Text style={styles.progressText}>
-                      Taking back photo...
-                    </Text>
-                  </>
-                )}
-                {captureMode === "front" && (
-                  <>
-                    <Text style={styles.progressEmoji}>📸</Text>
-                    <Text style={styles.progressText}>
-                      Now taking front photo...
-                    </Text>
-                    <Text style={styles.progressSubtext}>
-                      Look at the camera!
-                    </Text>
-                  </>
-                )}
+                <ActivityIndicator size="large" color="white" />
               </View>
             </View>
           )}
@@ -277,21 +292,33 @@ export default function CameraScreen() {
             : "Taking BeYou moment..."}
         </Text>
 
-        <TouchableOpacity
-          style={[
-            styles.captureButton,
-            (isLoading || captureMode !== "ready") &&
-              styles.captureButtonDisabled,
-          ]}
-          onPress={takeDualPhoto}
-          disabled={isLoading || captureMode !== "ready"}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="black" size="large" />
-          ) : (
-            <View style={styles.captureButtonInner} />
-          )}
-        </TouchableOpacity>
+        <View style={styles.cameraControls}>
+          <TouchableOpacity
+            style={styles.flipButton}
+            onPress={toggleCamera}
+            disabled={isLoading || captureMode !== "ready"}
+          >
+            <Text style={styles.flipButtonText}>🔄</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.captureButton,
+              (isLoading || captureMode !== "ready") &&
+                styles.captureButtonDisabled,
+            ]}
+            onPress={takeDualPhoto}
+            disabled={isLoading || captureMode !== "ready"}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="black" size="large" />
+            ) : (
+              <View style={styles.captureButtonInner} />
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.placeholder} />
+        </View>
 
         <Text style={styles.beyouText}>BeYou</Text>
       </View>
@@ -425,23 +452,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)",
   },
-  progressEmoji: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  progressText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginTop: 16,
-  },
-  progressSubtext: {
-    color: "rgba(255, 255, 255, 0.8)",
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 8,
-  },
   welcomeOverlay: {
     position: "absolute",
     top: 80,
@@ -508,5 +518,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     letterSpacing: 2,
+  },
+  cameraControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    paddingHorizontal: 40,
+    marginBottom: 16,
+  },
+  flipButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  flipButtonText: {
+    fontSize: 24,
+  },
+  placeholder: {
+    width: 50, // Same width as flip button for symmetry
   },
 });

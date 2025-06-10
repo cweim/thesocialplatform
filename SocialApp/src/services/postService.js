@@ -5,10 +5,14 @@ import { uploadImage } from './imageService';
 import { updateUserLocally, updateUserActivity } from './userService';
 
 // Create a new post with image and update user/group stats
-export const createPost = async (imageUri, caption, authorName, authorId, groupId) => {
+export const createPost = async (imageUri, caption, authorName, authorId, groupId, frontImageUri = null) => {
   try {
     console.log('🔄 Creating new post...');
     console.log('👤 Author:', authorName, 'Group:', groupId);
+    console.log('📸 Main Image URI:', imageUri);
+    if (frontImageUri) {
+      console.log('📸 Front Image URI:', frontImageUri);
+    }
 
     // Validate inputs
     if (!imageUri || !caption?.trim() || !authorName || !authorId || !groupId) {
@@ -21,23 +25,33 @@ export const createPost = async (imageUri, caption, authorName, authorId, groupI
       console.warn('⚠️ User might not be a member of this group, but proceeding...');
     }
 
-    // First upload the image
-    console.log('📤 Uploading image...');
-    const imageResult = await uploadImage(imageUri, groupId, authorId);
-    if (!imageResult) {
-      throw new Error('Image upload failed');
+    // Handle image uploads through imageService
+    const { uploadDualImages, uploadImage } = await import('./imageService');
+    let imageResult;
+
+    try {
+      if (frontImageUri) {
+        imageResult = await uploadDualImages(imageUri, frontImageUri, groupId, authorId);
+      } else {
+        imageResult = await uploadImage(imageUri, groupId, authorId);
+      }
+    } catch (uploadError) {
+      console.error('❌ Image upload failed:', uploadError);
+      throw new Error(`Failed to upload image: ${uploadError.message}`);
     }
 
     // Create post data
     const postData = {
-      imageUrl: imageResult.downloadURL,
+      imageUrl: frontImageUri ? imageResult.main.downloadURL : imageResult.downloadURL,
+      frontImageUrl: frontImageUri ? imageResult.front?.downloadURL : null,
+      compositeImageUrl: frontImageUri ? imageResult.composite?.downloadURL : null,
       caption: caption.trim(),
       authorName: authorName,
       authorId: authorId,
       groupId: groupId,
       createdAt: new Date(),
-      imageSize: imageResult.size,
-      imagePath: imageResult.path,
+      imageSize: frontImageUri ? imageResult.main.size : imageResult.size,
+      imagePath: frontImageUri ? imageResult.main.path : imageResult.path,
       likes: 0,
       likedBy: []
     };
@@ -55,7 +69,11 @@ export const createPost = async (imageUri, caption, authorName, authorId, groupI
     return newPost;
   } catch (error) {
     console.error('❌ Failed to create post:', error);
-    throw error; // Re-throw so calling code can handle it
+    if (error instanceof Error) {
+      console.error('Error details:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    throw error;
   }
 };
 

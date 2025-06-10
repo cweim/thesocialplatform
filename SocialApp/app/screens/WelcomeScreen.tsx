@@ -2,7 +2,6 @@
 import React, { useEffect } from "react";
 import { View, Text, StyleSheet, Animated, Platform } from "react-native";
 import { useRouter } from "expo-router";
-import { getUserLocally } from "../../src/services/userService";
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -25,31 +24,19 @@ export default function WelcomeScreen() {
       }),
     ]).start();
 
-    // Check for existing user and navigate accordingly
-    const checkUserAndNavigate = async () => {
+    // Navigate to auth screen after splash
+    const navigateToAuth = async () => {
       try {
-        console.log("🔄 Welcome screen: Checking for existing user...");
         // Wait for 3 seconds to show splash
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const existingUser = await getUserLocally();
-        if (existingUser) {
-          console.log("✅ Existing user found:", existingUser.name);
-          // Navigate to groups overview instead of directly to group feed
-          router.replace("/screens/GroupsOverviewScreen");
-        } else {
-          console.log("ℹ️ No existing user, go to name entry");
-          // New user, go to name entry
-          router.replace("/screens/NameEntryScreen");
-        }
+        router.replace("/screens/AuthScreen");
       } catch (error) {
-        console.error("❌ Error checking user:", error);
-        // On error, go to name entry as fallback
-        console.log("🔄 Error occurred, navigating to name entry as fallback");
-        router.replace("/screens/NameEntryScreen");
+        console.error("❌ Error navigating to auth:", error);
+        router.replace("/screens/AuthScreen");
       }
     };
 
-    checkUserAndNavigate();
+    navigateToAuth();
   }, []);
 
   return (

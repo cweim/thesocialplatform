@@ -89,7 +89,9 @@ export default function CreateGroupScreen() {
   const handleModalClose = () => {
     setModalVisible(false);
     if (modalConfig.type === "info") {
-      router.back();
+      setTimeout(() => {
+        router.back();
+      }, 500);
     }
   };
 

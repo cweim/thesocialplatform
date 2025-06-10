@@ -7,18 +7,15 @@ import {
   FlatList,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
+  Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { getUserLocally } from "../../src/services/userService";
 import { getUserGroups } from "../../src/services/groupService";
+import { Group as ServiceGroup } from "../../src/services/groupService";
+import { showAlert } from "../../src/utils/alert";
 
-interface Group {
-  id: string;
-  name: string;
-  description: string;
-  memberCount: number;
-  lastActivity: string;
+interface Group extends ServiceGroup {
   isOwner: boolean;
 }
 
@@ -32,17 +29,28 @@ export default function GroupsOverviewScreen() {
     loadUserAndGroups();
   }, []);
 
+  // Add focus effect to refresh groups
+  useFocusEffect(
+    React.useCallback(() => {
+      loadUserAndGroups();
+    }, [])
+  );
+
   const loadUserAndGroups = async () => {
     try {
       const user = await getUserLocally();
       if (user) {
         setUserName(user.name);
         const userGroups = await getUserGroups(user.id);
-        setGroups(userGroups);
+        const groupsWithOwner = userGroups.map((group) => ({
+          ...group,
+          isOwner: group.ownerId === user.id,
+        }));
+        setGroups(groupsWithOwner);
       }
     } catch (error) {
       console.error("Error loading user and groups:", error);
-      Alert.alert("Error", "Failed to load groups");
+      showAlert("Error", "Failed to load groups");
     } finally {
       setLoading(false);
     }
@@ -64,6 +72,15 @@ export default function GroupsOverviewScreen() {
     router.push("/screens/JoinGroupScreen");
   };
 
+  const formatDate = (date: any) => {
+    if (!date) return "Never";
+    if (typeof date === "string") return date;
+    if (date.seconds) {
+      return new Date(date.seconds * 1000).toLocaleDateString();
+    }
+    return new Date(date).toLocaleDateString();
+  };
+
   const renderGroupCard = ({ item }: { item: Group }) => (
     <TouchableOpacity
       style={styles.groupCard}
@@ -75,12 +92,13 @@ export default function GroupsOverviewScreen() {
         {item.isOwner && <Text style={styles.ownerBadge}>Owner</Text>}
       </View>
       <Text style={styles.groupDescription}>{item.description}</Text>
-      <View style={styles.groupFooter}>
+      <View style={styles.groupInfo}>
+        <Text style={styles.groupCode}>Code: {item.id}</Text>
         <Text style={styles.memberCount}>{item.memberCount} members</Text>
-        <Text style={styles.lastActivity}>
-          Last active: {item.lastActivity}
-        </Text>
       </View>
+      <Text style={styles.lastActivity}>
+        Last active: {formatDate(item.lastActivity)}
+      </Text>
     </TouchableOpacity>
   );
 
@@ -205,10 +223,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 20,
   },
-  groupFooter: {
+  groupInfo: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  groupCode: {
+    fontSize: 14,
+    color: "rgba(255, 255, 255, 0.7)",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   memberCount: {
     fontSize: 12,
