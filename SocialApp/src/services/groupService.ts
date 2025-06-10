@@ -1,4 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db } from './firebase';
+import { doc, setDoc, getDoc, collection, addDoc, updateDoc, increment } from 'firebase/firestore';
+import { User } from './userService';
 
 const GROUPS_STORAGE_KEY = 'user_groups';
 const ALL_GROUPS_STORAGE_KEY = 'all_groups';
@@ -7,147 +10,215 @@ export interface Group {
   id: string;
   name: string;
   description: string;
+  createdAt: Date;
   memberCount: number;
-  lastActivity: string;
-  isOwner: boolean;
-  createdAt: string;
-  ownerId: string;
+  totalPosts: number;
   members: string[];
+  ownerId: string;
+  lastActivity?: string;
 }
 
+// Get user's groups from local storage
 export const getUserGroups = async (userId: string): Promise<Group[]> => {
   try {
-    const userGroupsJson = await AsyncStorage.getItem(`${GROUPS_STORAGE_KEY}_${userId}`);
-    if (userGroupsJson) {
-      return JSON.parse(userGroupsJson);
+    const groupsData = await AsyncStorage.getItem(`${GROUPS_STORAGE_KEY}_${userId}`);
+    if (groupsData) {
+      return JSON.parse(groupsData);
     }
-    return getMockUserGroups(userId);
+    return [];
   } catch (error) {
-    console.error('Error getting user groups:', error);
+    console.error('❌ Failed to get user groups:', error);
     return [];
   }
 };
 
-const getMockUserGroups = (userId: string): Group[] => {
-  return [
-    {
-      id: 'group_1',
-      name: 'Family Photos',
-      description: 'Sharing our family moments and memories',
-      memberCount: 5,
-      lastActivity: '2 hours ago',
-      isOwner: true,
-      createdAt: '2024-01-15T10:30:00Z',
-      ownerId: userId,
-      members: [userId, 'user2', 'user3', 'user4', 'user5'],
-    },
-    {
-      id: 'group_2',
-      name: 'Weekend Trip',
-      description: 'Photos from our amazing weekend getaway',
-      memberCount: 8,
-      lastActivity: '1 day ago',
-      isOwner: false,
-      createdAt: '2024-02-01T14:20:00Z',
-      ownerId: 'user2',
-      members: [userId, 'user2', 'user6', 'user7', 'user8', 'user9', 'user10', 'user11'],
-    }
-  ];
-};
-
-export const createGroup = async (userId: string, groupName: string, description: string): Promise<Group> => {
+// Save user's groups to local storage
+export const saveUserGroups = async (userId: string, groups: Group[]): Promise<boolean> => {
   try {
-    const newGroup: Group = {
-      id: Math.random().toString(36).substring(2, 15),
-      name: groupName,
-      description: description,
-      memberCount: 1,
-      lastActivity: 'Just created',
-      isOwner: true,
-      createdAt: new Date().toISOString(),
-      ownerId: userId,
-      members: [userId],
-    };
-
-    const userGroups = await getUserGroups(userId);
-    userGroups.push(newGroup);
-    await AsyncStorage.setItem(`${GROUPS_STORAGE_KEY}_${userId}`, JSON.stringify(userGroups));
-
-    return newGroup;
+    await AsyncStorage.setItem(`${GROUPS_STORAGE_KEY}_${userId}`, JSON.stringify(groups));
+    return true;
   } catch (error) {
-    console.error('Error creating group:', error);
-    throw error;
+    console.error('❌ Failed to save user groups:', error);
+    return false;
   }
 };
 
-export const searchGroups = async (searchTerm: string): Promise<Group[]> => {
+// Join a group
+export const joinGroup = async (userId: string, groupId: string): Promise<boolean> => {
   try {
-    const mockGroups: Group[] = [
-      {
-        id: 'public_1',
-        name: 'Photography Club',
-        description: 'Share your best photography with fellow enthusiasts',
-        memberCount: 45,
-        lastActivity: '1 hour ago',
-        isOwner: false,
-        createdAt: '2024-01-10T08:00:00Z',
-        ownerId: 'photographer1',
-        members: [],
-      },
-      {
-        id: 'public_2',
-        name: 'Travel Buddies',
-        description: 'Document our adventures around the world',
-        memberCount: 23,
-        lastActivity: '3 hours ago',
-        isOwner: false,
-        createdAt: '2024-02-05T16:30:00Z',
-        ownerId: 'traveler1',
-        members: [],
-      }
-    ];
-
-    if (!searchTerm.trim()) {
-      return mockGroups;
-    }
-
-    return mockGroups.filter(group =>
-      group.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      group.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      group.id.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  } catch (error) {
-    console.error('Error searching groups:', error);
-    return [];
-  }
-};
-
-export const joinGroup = async (userId: string, groupId: string): Promise<Group> => {
-  try {
-    const allGroups = await searchGroups('');
-    const groupToJoin = allGroups.find(group => group.id === groupId);
-
-    if (!groupToJoin) {
+    // Get group from Firebase
+    const groupDoc = await getDoc(doc(db, 'groups', groupId));
+    if (!groupDoc.exists()) {
       throw new Error('Group not found');
     }
 
-    if (groupToJoin.members.includes(userId)) {
+    const groupData = groupDoc.data() as Group;
+
+    // Check if user is already a member
+    if (groupData.members.includes(userId)) {
       throw new Error('You are already a member of this group');
     }
 
-    const userGroups = await getUserGroups(userId);
-    const updatedGroup = {
-      ...groupToJoin,
-      members: [...groupToJoin.members, userId],
-      memberCount: groupToJoin.memberCount + 1
+    // Update group in Firebase
+    await updateDoc(doc(db, 'groups', groupId), {
+      members: [...groupData.members, userId],
+      memberCount: increment(1)
+    });
+
+    // Update user's local groups
+    const currentGroups = await getUserGroups(userId);
+    await saveUserGroups(userId, [...currentGroups, groupData]);
+
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to join group:', error);
+    throw error;
+  }
+};
+
+// Create a new group
+export const createGroup = async (
+  ownerId: string,
+  name: string,
+  description: string
+): Promise<Group> => {
+  try {
+    const groupId = 'group_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+    const groupData: Group = {
+      id: groupId,
+      name,
+      description,
+      createdAt: new Date(),
+      memberCount: 1,
+      totalPosts: 0,
+      members: [ownerId],
+      ownerId,
+      lastActivity: new Date().toISOString()
     };
 
-    userGroups.push(updatedGroup);
-    await AsyncStorage.setItem(`${GROUPS_STORAGE_KEY}_${userId}`, JSON.stringify(userGroups));
+    // Save to Firebase
+    await setDoc(doc(db, 'groups', groupId), groupData);
 
-    return updatedGroup;
+    // Update user's local groups
+    const currentGroups = await getUserGroups(ownerId);
+    await saveUserGroups(ownerId, [...currentGroups, groupData]);
+
+    return groupData;
   } catch (error) {
-    console.error('Error joining group:', error);
+    console.error('❌ Failed to create group:', error);
     throw error;
+  }
+};
+
+// Get group details
+export const getGroupDetails = async (groupId: string): Promise<Group | null> => {
+  try {
+    const groupDoc = await getDoc(doc(db, 'groups', groupId));
+    if (groupDoc.exists()) {
+      return groupDoc.data() as Group;
+    }
+    return null;
+  } catch (error) {
+    console.error('❌ Failed to get group details:', error);
+    return null;
+  }
+};
+
+// Update group details
+export const updateGroupDetails = async (
+  groupId: string,
+  updates: Partial<Group>
+): Promise<boolean> => {
+  try {
+    await updateDoc(doc(db, 'groups', groupId), {
+      ...updates,
+      lastActivity: new Date().toISOString()
+    });
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to update group details:', error);
+    return false;
+  }
+};
+
+// Leave a group
+export const leaveGroup = async (userId: string, groupId: string): Promise<boolean> => {
+  try {
+    const groupDoc = await getDoc(doc(db, 'groups', groupId));
+    if (!groupDoc.exists()) {
+      throw new Error('Group not found');
+    }
+
+    const groupData = groupDoc.data() as Group;
+
+    // Remove user from group members
+    const updatedMembers = groupData.members.filter(id => id !== userId);
+
+    // Update group in Firebase
+    await updateDoc(doc(db, 'groups', groupId), {
+      members: updatedMembers,
+      memberCount: increment(-1)
+    });
+
+    // Update user's local groups
+    const currentGroups = await getUserGroups(userId);
+    await saveUserGroups(userId, currentGroups.filter(g => g.id !== groupId));
+
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to leave group:', error);
+    throw error;
+  }
+};
+
+// Clear group data (for testing)
+export const clearGroupData = async (userId?: string): Promise<boolean> => {
+  try {
+    const groupKeysToRemove = [ALL_GROUPS_STORAGE_KEY];
+
+    if (userId) {
+      groupKeysToRemove.push(`${GROUPS_STORAGE_KEY}_${userId}`);
+    }
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      groupKeysToRemove.forEach(key => {
+        window.localStorage.removeItem(key);
+      });
+    } else {
+      await AsyncStorage.multiRemove(groupKeysToRemove);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to clear group data:', error);
+    return false;
+  }
+};
+
+export const updateGroupStatistics = async (
+  groupId: string,
+  updates: { totalPosts?: number; memberCount?: number }
+): Promise<boolean> => {
+  try {
+    const groupDoc = await getDoc(doc(db, 'groups', groupId));
+    if (!groupDoc.exists()) {
+      console.error('❌ Group not found for statistics update:', groupId);
+      return false;
+    }
+
+    const updateData: any = { lastActivity: new Date().toISOString() };
+    if (updates.totalPosts !== undefined) {
+      updateData.totalPosts = updates.totalPosts;
+    }
+    if (updates.memberCount !== undefined) {
+      updateData.memberCount = updates.memberCount;
+    }
+
+    await updateDoc(doc(db, 'groups', groupId), updateData);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to update group statistics:', error);
+    return false;
   }
 };

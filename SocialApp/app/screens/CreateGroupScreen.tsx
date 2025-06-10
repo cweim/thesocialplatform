@@ -7,13 +7,13 @@ import {
   TextInput,
   TouchableOpacity,
   SafeAreaView,
-  Modal,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { getUserLocally } from "../../src/services/userService";
 import { createGroup } from "../../src/services/groupService";
+import { Modal } from "../../src/components/Modal";
 
 export default function CreateGroupScreen() {
   const router = useRouter();
@@ -25,7 +25,7 @@ export default function CreateGroupScreen() {
     title: "",
     message: "",
     groupId: "",
-    type: "info",
+    type: "info" as "info" | "error",
   });
 
   const showModal = (
@@ -163,34 +163,13 @@ export default function CreateGroupScreen() {
       </KeyboardAvoidingView>
 
       <Modal
-        animationType="fade"
-        transparent={true}
         visible={modalVisible}
-        onRequestClose={handleModalClose}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{modalConfig.title}</Text>
-            <Text style={styles.modalMessage}>{modalConfig.message}</Text>
-
-            {modalConfig.groupId && (
-              <View style={styles.groupIdContainer}>
-                <Text style={styles.groupIdLabel}>Group Code:</Text>
-                <Text style={styles.groupId}>{modalConfig.groupId}</Text>
-              </View>
-            )}
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonConfirm]}
-                onPress={handleModalClose}
-              >
-                <Text style={styles.modalButtonText}>OK</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        title={modalConfig.title}
+        message={modalConfig.message}
+        groupId={modalConfig.groupId}
+        type={modalConfig.type}
+        onClose={handleModalClose}
+      />
     </SafeAreaView>
   );
 }
@@ -278,69 +257,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "black",
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    backgroundColor: "#1a1a1a",
-    borderRadius: 12,
-    padding: 24,
-    width: "90%",
-    maxWidth: 400,
-    borderWidth: 1,
-    borderColor: "#333333",
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "white",
-    marginBottom: 12,
-  },
-  modalMessage: {
-    fontSize: 16,
-    color: "rgba(255, 255, 255, 0.8)",
-    marginBottom: 16,
-    lineHeight: 24,
-  },
-  groupIdContainer: {
-    backgroundColor: "#333333",
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 24,
-    alignItems: "center",
-  },
-  groupIdLabel: {
-    fontSize: 14,
-    color: "rgba(255, 255, 255, 0.7)",
-    marginBottom: 8,
-  },
-  groupId: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "white",
-    letterSpacing: 1,
-  },
-  modalButtons: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  modalButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    minWidth: 100,
-    alignItems: "center",
-  },
-  modalButtonConfirm: {
-    backgroundColor: "#dc3545",
-  },
-  modalButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
   },
 });

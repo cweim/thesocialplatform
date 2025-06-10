@@ -91,7 +91,7 @@ export default function GroupFeedScreen() {
   };
 
   const handleBackToGroups = () => {
-    router.back();
+    router.push("/screens/GroupsOverviewScreen");
   };
 
   if (loading) {
