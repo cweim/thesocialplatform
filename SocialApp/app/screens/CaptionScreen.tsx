@@ -24,80 +24,166 @@ import { createPost } from "../../src/services/postService";
 
 const { width } = Dimensions.get("window");
 
+// Web-compatible alert function
+const showAlert = (title: string, message: string) => {
+  if (Platform.OS === "web") {
+    window.alert(`${title}: ${message}`);
+  } else {
+    // For mobile, you could use a custom modal or Alert.alert
+    alert(`${title}: ${message}`);
+  }
+};
+
 export default function CaptionScreen() {
   const [caption, setCaption] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-  const [isMainImageFront, setIsMainImageFront] = useState(false);
+  const [isToggled, setIsToggled] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
-  const { imageUri, frontImageUri, groupId, groupName } =
+
+  const { imageUri, frontImageUri, groupId, groupName, firstCameraUsed } =
     useLocalSearchParams();
 
+  console.log("=== CAPTION SCREEN DEBUG ===");
+  console.log("Received params:", {
+    imageUri,
+    frontImageUri,
+    groupId,
+    groupName,
+    firstCameraUsed,
+  });
+
+  // Determine which image should be main based on firstCameraUsed and toggle state
+  // Logic: Show the first captured image as main by default, allow toggling
+  const getMainImage = () => {
+    if (!isToggled) {
+      // Show first captured image as main
+      return firstCameraUsed === "back" ? imageUri : frontImageUri;
+    } else {
+      // Show second captured image as main
+      return firstCameraUsed === "back" ? frontImageUri : imageUri;
+    }
+  };
+
+  const getOverlayImage = () => {
+    if (!isToggled) {
+      // Show second captured image as overlay
+      return firstCameraUsed === "back" ? frontImageUri : imageUri;
+    } else {
+      // Show first captured image as overlay
+      return firstCameraUsed === "back" ? imageUri : frontImageUri;
+    }
+  };
+
+  const mainImageUri = getMainImage();
+  const overlayImageUri = getOverlayImage();
+
+  console.log("Image display logic:", {
+    firstCameraUsed,
+    isToggled,
+    mainImageUri: mainImageUri?.toString().substring(0, 50) + "...",
+    overlayImageUri: overlayImageUri?.toString().substring(0, 50) + "...",
+  });
+
   const handleSubmit = async () => {
+    console.log("=== STARTING POST SUBMISSION ===");
+
+    // Clear any previous error
+    setErrorMessage("");
+
+    // Validation with detailed logging
     if (!imageUri || !frontImageUri) {
-      alert("No images selected");
+      const error = "Missing image files";
+      console.error("❌ VALIDATION FAILED:", error);
+      setErrorMessage("No images found. Please retake your photos.");
+      showAlert("Error", "No images found. Please retake your photos.");
       return;
     }
+
     if (caption.trim().length === 0) {
-      alert("Please write something about your photo!");
+      const error = "Empty caption";
+      console.error("❌ VALIDATION FAILED:", error);
+      setErrorMessage("Please write a caption for your photo.");
+      showAlert("Error", "Please write a caption for your photo.");
       return;
     }
+
     if (!groupId) {
-      alert("No group selected");
+      const error = "No group selected";
+      console.error("❌ VALIDATION FAILED:", error);
+      setErrorMessage("No group selected. Please try again.");
+      showAlert("Error", "No group selected. Please try again.");
       return;
     }
+
+    console.log("✅ Initial validation passed");
 
     setIsUploading(true);
     try {
       console.log("🔄 Starting photo upload process...");
 
-      // Get current user
+      // Get current user with validation
       const user = await getUserLocally();
       if (!user) {
-        throw new Error("User not found");
+        throw new Error("User not found. Please log in again.");
       }
 
-      console.log("👤 User:", user.name, "Group:", groupId);
-      console.log("📝 Caption:", caption.trim());
-      console.log("🖼️ Main Image URI:", imageUri);
-      console.log("🖼️ Front Image URI:", frontImageUri);
+      console.log("👤 User validated:", user.name, "ID:", user.id);
+      console.log("📝 Caption length:", caption.trim().length);
+      console.log(
+        "🖼️ Back camera image:",
+        imageUri?.toString().substring(0, 50) + "..."
+      );
+      console.log(
+        "🖼️ Front camera image:",
+        frontImageUri?.toString().substring(0, 50) + "..."
+      );
+      console.log("🎯 Target group:", groupId, "-", groupName);
 
       // Check if this is user's first post in this group
       const groupsPosted = user.groupsPosted || [];
       const isFirstPostInGroup = !groupsPosted.includes(groupId as string);
 
+      console.log("📊 User posting status:", {
+        totalGroupsPosted: groupsPosted.length,
+        isFirstPostInGroup,
+        groupsPosted: groupsPosted,
+      });
+
       // Create the post with both images
+      // Always pass back camera image as first parameter (imageUri)
+      // and front camera image as frontImageUri for consistency
+      console.log("📤 Calling createPost...");
       const newPost = await createPost(
         imageUri as string,
         caption.trim(),
         user.name,
         user.id,
         groupId as string,
-        frontImageUri as string
+        (frontImageUri ? (frontImageUri as string) : null) as null | undefined
       );
 
       if (!newPost) {
-        throw new Error("Failed to create post");
+        throw new Error("Failed to create post - no result returned");
       }
 
       console.log("✅ Post created successfully:", newPost.id);
 
-      // If this is the user's first post in this group, update their status
+      // Update user status if this is their first post in this group
       if (isFirstPostInGroup) {
         console.log("🔓 Updating user's groups posted list...");
 
-        // Add this group to the user's posted groups
         const updatedGroupsPosted = [...groupsPosted, groupId as string];
 
         await updateUserLocally(
           {
             groupsPosted: updatedGroupsPosted,
-            hasUploaded: true, // Keep for backward compatibility
+            hasUploaded: true,
           },
           true
         );
 
-        // Track the activity
         await updateUserActivity("first_post_in_group", {
           groupId: groupId,
           groupName: groupName,
@@ -105,7 +191,6 @@ export default function CaptionScreen() {
 
         console.log("✅ User groups posted status updated");
       } else {
-        // Track regular post activity
         await updateUserActivity("posted_in_group", {
           groupId: groupId,
           groupName: groupName,
@@ -125,10 +210,15 @@ export default function CaptionScreen() {
       }, 3000);
     } catch (error) {
       console.error("❌ Error uploading photo:", error);
-      alert(
-        `Upload failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }\n\nPlease check your connection and try again.`
+
+      const errorMsg =
+        error instanceof Error ? error.message : "Unknown error occurred";
+      console.error("Error details:", errorMsg);
+
+      setErrorMessage(errorMsg);
+      showAlert(
+        "Upload Failed",
+        `${errorMsg}\n\nPlease check your connection and try again.`
       );
       setIsUploading(false);
     }
@@ -165,8 +255,26 @@ export default function CaptionScreen() {
   }, [groupId]);
 
   const toggleImages = () => {
-    setIsMainImageFront(!isMainImageFront);
+    console.log("🔄 Toggling images - was:", isToggled, "now:", !isToggled);
+    setIsToggled(!isToggled);
   };
+
+  // Determine which camera was used for main vs overlay for display labels
+  const getImageLabels = () => {
+    if (!isToggled) {
+      return {
+        main: firstCameraUsed === "back" ? "Back Camera" : "Front Camera",
+        overlay: firstCameraUsed === "back" ? "Front Camera" : "Back Camera",
+      };
+    } else {
+      return {
+        main: firstCameraUsed === "back" ? "Front Camera" : "Back Camera",
+        overlay: firstCameraUsed === "back" ? "Back Camera" : "Front Camera",
+      };
+    }
+  };
+
+  const imageLabels = getImageLabels();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -204,29 +312,47 @@ export default function CaptionScreen() {
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Error Display */}
+          {errorMessage !== "" && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>⚠️ {errorMessage}</Text>
+            </View>
+          )}
+
           {/* Image Preview */}
           <View style={styles.imageContainer}>
             <TouchableOpacity onPress={toggleImages} activeOpacity={0.9}>
               <Image
-                source={{
-                  uri: isMainImageFront
-                    ? (frontImageUri as string)
-                    : (imageUri as string),
-                }}
+                source={{ uri: mainImageUri as string }}
                 style={styles.image}
+                onError={() => {
+                  console.error("❌ Main image failed to load:", mainImageUri);
+                  setErrorMessage("Failed to load main image");
+                }}
               />
               {/* Small overlay image */}
               <View style={styles.overlayContainer}>
                 <Image
-                  source={{
-                    uri: isMainImageFront
-                      ? (imageUri as string)
-                      : (frontImageUri as string),
-                  }}
+                  source={{ uri: overlayImageUri as string }}
                   style={styles.overlayImage}
+                  onError={() => {
+                    console.error(
+                      "❌ Overlay image failed to load:",
+                      overlayImageUri
+                    );
+                    setErrorMessage("Failed to load overlay image");
+                  }}
                 />
               </View>
             </TouchableOpacity>
+
+            {/* Image Toggle Instructions */}
+            <View style={styles.toggleInstructions}>
+              <Text style={styles.toggleText}>
+                📸 Main: {imageLabels.main} • Tap to switch
+              </Text>
+            </View>
+
             {isFirstPostInGroup && (
               <View style={styles.firstUploadBadge}>
                 <Text style={styles.firstUploadBadgeText}>🎉 First Photo!</Text>
@@ -241,7 +367,10 @@ export default function CaptionScreen() {
               placeholder="Write a caption for your photo..."
               placeholderTextColor="rgba(255, 255, 255, 0.5)"
               value={caption}
-              onChangeText={setCaption}
+              onChangeText={(text) => {
+                setCaption(text);
+                if (errorMessage) setErrorMessage(""); // Clear error when user types
+              }}
               multiline
               maxLength={500}
               autoFocus={true}
@@ -369,6 +498,19 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
   },
+  errorContainer: {
+    backgroundColor: "#FF4444",
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  errorText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
+  },
   imageContainer: {
     marginTop: 20,
     marginBottom: 24,
@@ -376,9 +518,25 @@ const styles = StyleSheet.create({
   },
   image: {
     width: "100%",
-    height: width * 1.2, // Increased from 0.75 to 1.2 for a taller image
+    height: width * 1.2,
     borderRadius: 12,
     backgroundColor: "#1a1a1a",
+  },
+  toggleInstructions: {
+    position: "absolute",
+    bottom: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  toggleText: {
+    color: "white",
+    fontSize: 12,
+    textAlign: "center",
+    fontWeight: "500",
   },
   firstUploadBadge: {
     position: "absolute",
@@ -437,7 +595,6 @@ const styles = StyleSheet.create({
   bottomPadding: {
     height: 40,
   },
-
   uploadOverlay: {
     position: "absolute",
     top: 0,

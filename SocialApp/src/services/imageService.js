@@ -6,17 +6,23 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const IMAGE_QUALITY = 0.8;
-const OVERLAY_SIZE_RATIO = 0.25; // Front camera overlay will be 25% of main image width
 
 // Upload single image to Firebase Storage
 export const uploadImage = async (imageUri, groupId, userId, imageType = 'main') => {
   try {
-    console.log('🔄 Starting image upload...');
+    console.log('=== SINGLE IMAGE UPLOAD START ===');
     console.log('📁 Group:', groupId, 'User:', userId, 'Type:', imageType);
+    console.log('📸 Image URI:', imageUri?.substring(0, 50) + '...');
 
     // Validate inputs
-    if (!imageUri || !groupId || !userId) {
-      throw new Error('Missing required parameters for image upload');
+    if (!imageUri) {
+      throw new Error('Image URI is required');
+    }
+    if (!groupId) {
+      throw new Error('Group ID is required');
+    }
+    if (!userId) {
+      throw new Error('User ID is required');
     }
 
     // Create unique filename with type indicator
@@ -32,7 +38,7 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
     const blob = await uriToBlob(imageUri);
     validateImageBlob(blob);
 
-    console.log('📦 Image size:', blob.size, 'bytes');
+    console.log('📦 Image blob created - Size:', blob.size, 'bytes, Type:', blob.type);
 
     // Create storage reference
     const imageRef = ref(storage, imagePath);
@@ -48,20 +54,20 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
       }
     };
 
-    console.log('📤 Uploading to Firebase...');
+    console.log('📤 Uploading to Firebase Storage...');
     const snapshot = await uploadBytes(imageRef, blob, metadata);
-    console.log('✅ Upload completed');
+    console.log('✅ Upload completed to:', snapshot.ref.fullPath);
 
     // Get download URL
     console.log('🔗 Generating download URL...');
     const downloadURL = await getDownloadURL(snapshot.ref);
-    console.log('✅ Download URL generated');
+    console.log('✅ Download URL generated:', downloadURL.substring(0, 50) + '...');
 
     if (!downloadURL) {
       throw new Error('Failed to generate download URL');
     }
 
-    return {
+    const result = {
       downloadURL,
       path: imagePath,
       size: blob.size,
@@ -69,8 +75,14 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
       type: imageType,
       contentType: blob.type
     };
+
+    console.log('🎉 Single image upload completed successfully');
+    return result;
+
   } catch (error) {
-    console.error('❌ Image upload failed:', error);
+    console.error('❌ Single image upload failed:', error);
+
+    // Handle specific Firebase Storage errors
     if (error.code === 'storage/unauthorized') {
       throw new Error('Unauthorized to upload image. Please check your permissions.');
     } else if (error.code === 'storage/canceled') {
@@ -80,220 +92,289 @@ export const uploadImage = async (imageUri, groupId, userId, imageType = 'main')
     } else if (error.code === 'storage/invalid-checksum') {
       throw new Error('Image upload failed due to corruption. Please try again.');
     } else {
-      throw new Error(`Failed to upload image: ${error.message}`);
+      throw new Error(`Image upload failed: ${error.message}`);
     }
   }
 };
 
-// Upload dual images (BeReal-style with main + front camera overlay)
-export const uploadDualImages = async (mainImageUri, frontImageUri, groupId, userId) => {
+// Upload dual images (back + front camera) with robust error handling
+export const uploadDualImages = async (backImageUri, frontImageUri, groupId, userId) => {
   try {
-    console.log('🔄 Starting dual image upload (BeReal-style)...');
+    console.log('=== DUAL IMAGE UPLOAD START ===');
+    console.log('📸 Back camera URI:', backImageUri?.substring(0, 50) + '...');
+    console.log('📸 Front camera URI:', frontImageUri?.substring(0, 50) + '...');
+    console.log('🎯 Target: Group', groupId, 'User', userId);
 
-    if (!mainImageUri) {
-      throw new Error('Main image is required');
+    // Validate inputs
+    if (!backImageUri) {
+      throw new Error('Back camera image URI is required');
+    }
+    if (!frontImageUri) {
+      throw new Error('Front camera image URI is required');
+    }
+    if (!groupId) {
+      throw new Error('Group ID is required');
+    }
+    if (!userId) {
+      throw new Error('User ID is required');
     }
 
     const results = {};
 
-    // Always upload main image
-    results.main = await uploadImage(mainImageUri, groupId, userId, 'main');
+    // Step 1: Upload back camera image (main image)
+    console.log('⏳ Step 1: Uploading back camera image...');
+    try {
+      results.main = await uploadImage(backImageUri, groupId, userId, 'main');
+      console.log('✅ Back camera upload completed:', !!results.main?.downloadURL);
+    } catch (mainError) {
+      console.error('❌ Back camera upload failed:', mainError);
+      throw new Error(`Back camera upload failed: ${mainError.message}`);
+    }
+
+    // Validate main upload result
     if (!results.main?.downloadURL) {
-      throw new Error('Main image upload failed');
+      throw new Error('Back camera upload failed - no download URL received');
     }
 
-    // Upload front image if provided
-    if (frontImageUri) {
+    // Step 2: Upload front camera image
+    console.log('⏳ Step 2: Uploading front camera image...');
+    try {
       results.front = await uploadImage(frontImageUri, groupId, userId, 'front');
-      if (!results.front?.downloadURL) {
-        throw new Error('Front image upload failed');
-      }
+      console.log('✅ Front camera upload completed:', !!results.front?.downloadURL);
+    } catch (frontError) {
+      console.error('❌ Front camera upload failed:', frontError);
 
-      // Create composite image (optional - for BeReal-style display)
+      // Try to cleanup the main image if front fails
       try {
-        const compositeResult = await createCompositeImage(mainImageUri, frontImageUri, groupId, userId);
-        if (compositeResult) {
-          results.composite = compositeResult;
-        }
-      } catch (compositeError) {
-        console.warn('⚠️ Failed to create composite image:', compositeError);
-        // Continue without composite - not critical
+        console.log('🧹 Cleaning up main image due to front upload failure...');
+        await deleteImage(results.main.path);
+      } catch (cleanupError) {
+        console.warn('⚠️ Failed to cleanup main image:', cleanupError);
       }
+
+      throw new Error(`Front camera upload failed: ${frontError.message}`);
     }
 
-    console.log('✅ Dual image upload completed');
+    // Validate front upload result
+    if (!results.front?.downloadURL) {
+      throw new Error('Front camera upload failed - no download URL received');
+    }
+
+    // Final validation
+    console.log('🔍 Final validation...');
+    if (!results.main.downloadURL || !results.front.downloadURL) {
+      throw new Error('One or both image uploads failed validation');
+    }
+
+    console.log('🎉 Dual image upload completed successfully!');
+    console.log('📊 Upload summary:', {
+      mainSize: results.main.size,
+      frontSize: results.front.size,
+      totalSize: results.main.size + results.front.size
+    });
+
     return results;
+
   } catch (error) {
-    console.error('❌ Dual image upload failed:', error);
-    throw error;
+    console.error('❌ DUAL IMAGE UPLOAD FAILED:', error);
+    console.error('Error details:', error.message);
+
+    // Re-throw with more context
+    throw new Error(`Dual image upload failed: ${error.message}`);
   }
 };
 
-// Create BeReal-style composite image with overlay
-const createCompositeImage = async (mainImageUri, frontImageUri, groupId, userId) => {
-  try {
-    console.log('🎨 Creating composite BeReal-style image...');
-
-    // Only works in browser environment
-    if (typeof document === 'undefined') {
-      console.log('📱 Composite creation skipped on mobile');
-      return null;
-    }
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    // Load main image
-    const mainImg = await loadImage(mainImageUri);
-
-    // Set canvas size to main image dimensions
-    canvas.width = mainImg.width;
-    canvas.height = mainImg.height;
-
-    // Draw main image
-    ctx.drawImage(mainImg, 0, 0);
-
-    // Load and draw front camera overlay
-    const frontImg = await loadImage(frontImageUri);
-
-    // Calculate overlay size and position
-    const overlayWidth = canvas.width * OVERLAY_SIZE_RATIO;
-    const overlayHeight = (frontImg.height / frontImg.width) * overlayWidth;
-    const overlayX = 20; // 20px from left
-    const overlayY = 20; // 20px from top
-
-    // Add border/shadow for overlay
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
-
-    // Draw front camera overlay with rounded corners
-    drawRoundedImage(ctx, frontImg, overlayX, overlayY, overlayWidth, overlayHeight, 10);
-
-    // Convert to blob
-    const compositeBlob = await canvasToBlob(canvas, 'image/jpeg', IMAGE_QUALITY);
-
-    // Upload composite image
-    const timestamp = Date.now();
-    const filename = `${userId}_${timestamp}_composite.jpg`;
-    const imagePath = `groups/${groupId}/photos/${filename}`;
-
-    const imageRef = ref(storage, imagePath);
-    const snapshot = await uploadBytes(imageRef, compositeBlob);
-    const downloadURL = await getDownloadURL(snapshot.ref);
-
-    console.log('✅ Composite image created and uploaded');
-
-    return {
-      downloadURL,
-      path: imagePath,
-      size: compositeBlob.size,
-      filename,
-      type: 'composite'
-    };
-  } catch (error) {
-    console.error('❌ Failed to create composite image:', error);
-    throw error;
-  }
-};
-
-// Helper function to load image from URI
-const loadImage = (src) => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
-};
-
-// Helper function to draw rounded image
-const drawRoundedImage = (ctx, img, x, y, width, height, radius) => {
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, width, height, radius);
-  ctx.clip();
-  ctx.drawImage(img, x, y, width, height);
-  ctx.restore();
-};
-
-// Helper function to convert canvas to blob
-const canvasToBlob = (canvas, type, quality) => {
-  return new Promise((resolve) => {
-    canvas.toBlob(resolve, type, quality);
-  });
-};
-
-// Convert image URI to blob with validation
+// Convert image URI to blob with comprehensive error handling
 const uriToBlob = async (imageUri) => {
   try {
-    console.log('🔄 Converting URI to blob:', imageUri);
+    console.log('🔄 Converting URI to blob...');
+    console.log('📝 URI type:', typeof imageUri);
+    console.log('📏 URI length:', imageUri?.length);
+    console.log('🎯 URI format:', imageUri?.substring(0, 20) + '...');
 
-    // Handle data URLs
-    if (imageUri.startsWith('data:')) {
-      const response = await fetch(imageUri);
-      const blob = await response.blob();
-      console.log('✅ Data URL converted to blob');
-      return blob;
+    if (!imageUri) {
+      throw new Error('Image URI is null or undefined');
     }
 
-    // Handle file:// URLs
-    if (imageUri.startsWith('file://')) {
-      console.log('📁 Handling file:// URL');
-      const response = await fetch(imageUri);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+    // Handle data URLs (base64 encoded images)
+    if (imageUri.startsWith('data:')) {
+      console.log('📝 Processing data URL...');
+      try {
+        const response = await fetch(imageUri);
+        if (!response.ok) {
+          throw new Error(`Data URL fetch failed: ${response.status}`);
+        }
+        const blob = await response.blob();
+        console.log('✅ Data URL converted to blob, size:', blob.size);
+        return blob;
+      } catch (dataError) {
+        console.error('❌ Data URL processing failed:', dataError);
+        throw new Error(`Failed to process data URL: ${dataError.message}`);
       }
-      const blob = await response.blob();
-      console.log('✅ File URL converted to blob');
-      return blob;
+    }
+
+    // Handle file:// URLs (mobile camera captures)
+    if (imageUri.startsWith('file://')) {
+      console.log('📁 Processing file:// URL...');
+      return await handleFileUri(imageUri);
     }
 
     // Handle http(s) URLs
     if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
-      console.log('🌐 Handling http(s) URL');
-      const response = await fetch(imageUri);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+      console.log('🌐 Processing HTTP URL...');
+      try {
+        const response = await fetch(imageUri, {
+          method: 'GET',
+          cache: 'no-cache'
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP fetch failed: ${response.status} ${response.statusText}`);
+        }
+
+        const blob = await response.blob();
+        console.log('✅ HTTP URL converted to blob, size:', blob.size);
+        return blob;
+      } catch (httpError) {
+        console.error('❌ HTTP URL processing failed:', httpError);
+        throw new Error(`Failed to process HTTP URL: ${httpError.message}`);
       }
-      const blob = await response.blob();
-      console.log('✅ HTTP URL converted to blob');
-      return blob;
     }
 
-    throw new Error('Unsupported image URI format');
+    // Unsupported URI format
+    console.error('❌ Unsupported URI format:', imageUri.substring(0, 50));
+    throw new Error(`Unsupported image URI format: ${imageUri.substring(0, 20)}...`);
+
   } catch (error) {
-    console.error('❌ Failed to convert URI to blob:', error);
-    console.error('URI type:', typeof imageUri);
-    console.error('URI length:', imageUri?.length);
-    throw new Error(`Failed to process image data: ${error.message}`);
+    console.error('❌ URI to blob conversion failed:', error);
+    throw new Error(`Failed to process image: ${error.message}`);
   }
 };
 
-// Validate image blob
+// Handle file:// URIs with multiple fallback methods
+const handleFileUri = async (fileUri) => {
+  console.log('📁 Handling file URI with multiple fallback methods...');
+
+  const fetchMethods = [
+    {
+      name: 'Simple fetch',
+      options: {
+        method: 'GET',
+        cache: 'no-cache',
+        credentials: 'omit',
+      }
+    },
+    {
+      name: 'With headers',
+      options: {
+        method: 'GET',
+        headers: {
+          'Accept': 'image/*',
+        },
+        cache: 'no-cache',
+        credentials: 'omit',
+      }
+    },
+    {
+      name: 'With specific headers',
+      options: {
+        method: 'GET',
+        headers: {
+          'Accept': 'image/jpeg,image/png,image/*',
+          'Content-Type': 'image/jpeg',
+        },
+        cache: 'no-cache',
+        credentials: 'omit',
+      }
+    },
+    {
+      name: 'Minimal options',
+      options: {
+        cache: 'no-cache'
+      }
+    }
+  ];
+
+  let lastError;
+
+  for (let i = 0; i < fetchMethods.length; i++) {
+    const method = fetchMethods[i];
+    try {
+      console.log(`🔄 Trying method ${i + 1}/${fetchMethods.length}: ${method.name}`);
+
+      const response = await fetch(fileUri, method.options);
+
+      if (!response.ok) {
+        throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+
+      if (blob.size === 0) {
+        throw new Error('Received empty blob');
+      }
+
+      console.log(`✅ Method ${i + 1} succeeded - blob size:`, blob.size);
+      return blob;
+
+    } catch (error) {
+      console.log(`❌ Method ${i + 1} failed:`, error.message);
+      lastError = error;
+
+      // Wait a bit before trying the next method
+      if (i < fetchMethods.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+  }
+
+  // All methods failed
+  console.error('❌ All file URI processing methods failed');
+  throw new Error(`Failed to process file URI after ${fetchMethods.length} attempts. Last error: ${lastError?.message}`);
+};
+
+// Validate image blob with comprehensive checks
 const validateImageBlob = (blob) => {
-  // Check file size
+  console.log('🔍 Validating image blob...');
+
+  // Check if blob exists
+  if (!blob) {
+    throw new Error('Image blob is null or undefined');
+  }
+
+  // Check blob size
+  if (blob.size === 0) {
+    throw new Error('Image file is empty (0 bytes)');
+  }
+
   if (blob.size > MAX_IMAGE_SIZE) {
-    throw new Error(`Image too large. Maximum size is ${MAX_IMAGE_SIZE / (1024 * 1024)}MB`);
+    const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+    const maxSizeMB = (MAX_IMAGE_SIZE / (1024 * 1024)).toFixed(0);
+    throw new Error(`Image too large (${sizeMB}MB). Maximum size is ${maxSizeMB}MB`);
   }
 
   // Check file type
-  if (!ALLOWED_TYPES.includes(blob.type)) {
-    throw new Error(`Invalid image type. Allowed types: ${ALLOWED_TYPES.join(', ')}`);
+  if (!blob.type) {
+    console.warn('⚠️ Blob has no content type, assuming image/jpeg');
+    // Don't throw - some mobile platforms don't set content-type
+  } else if (!ALLOWED_TYPES.includes(blob.type)) {
+    throw new Error(`Invalid image type (${blob.type}). Allowed types: ${ALLOWED_TYPES.join(', ')}`);
   }
 
-  // Check if blob is empty
-  if (blob.size === 0) {
-    throw new Error('Image file is empty');
-  }
+  console.log('✅ Image blob validation passed:', {
+    size: blob.size,
+    type: blob.type || 'unknown'
+  });
 };
 
 // Delete image from Firebase Storage
 export const deleteImage = async (imagePath) => {
   try {
     console.log('🗑️ Deleting image:', imagePath);
+
+    if (!imagePath) {
+      throw new Error('Image path is required');
+    }
 
     const imageRef = ref(storage, imagePath);
     await deleteObject(imageRef);
@@ -302,6 +383,12 @@ export const deleteImage = async (imagePath) => {
     return true;
   } catch (error) {
     console.error('❌ Failed to delete image:', error);
+
+    if (error.code === 'storage/object-not-found') {
+      console.log('ℹ️ Image was already deleted or never existed');
+      return true; // Consider this a success
+    }
+
     return false;
   }
 };
@@ -311,10 +398,15 @@ export const deleteImages = async (imagePaths) => {
   try {
     console.log('🗑️ Deleting multiple images:', imagePaths.length);
 
+    if (!imagePaths || imagePaths.length === 0) {
+      console.log('ℹ️ No images to delete');
+      return { successful: 0, total: 0 };
+    }
+
     const deletePromises = imagePaths.map(path => deleteImage(path));
     const results = await Promise.allSettled(deletePromises);
 
-    const successful = results.filter(r => r.status === 'fulfilled').length;
+    const successful = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
     console.log(`✅ Deleted ${successful}/${imagePaths.length} images`);
 
     return { successful, total: imagePaths.length };
@@ -324,114 +416,109 @@ export const deleteImages = async (imagePaths) => {
   }
 };
 
-// Compress image for better performance (browser only)
-export const compressImage = async (imageUri, maxWidth = 1920, quality = IMAGE_QUALITY) => {
+// Create test image for development/testing
+export const createTestImage = (color = '#FF0000', text = 'TEST', size = 200) => {
   try {
+    console.log('🎨 Creating test image:', { color, text, size });
+
+    // Check if we're in a browser environment
     if (typeof document === 'undefined') {
-      // On mobile, return original image
-      return imageUri;
+      console.warn('⚠️ Cannot create test image - not in browser environment');
+      return null;
     }
 
-    console.log('🗜️ Compressing image...');
-
-    const img = await loadImage(imageUri);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    // Calculate new dimensions while maintaining aspect ratio
-    const ratio = Math.min(maxWidth / img.width, maxWidth / img.height);
-    const newWidth = img.width * ratio;
-    const newHeight = img.height * ratio;
-
-    canvas.width = newWidth;
-    canvas.height = newHeight;
-
-    // Draw resized image
-    ctx.drawImage(img, 0, 0, newWidth, newHeight);
-
-    // Convert to data URL with compression
-    const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-
-    console.log('✅ Image compressed');
-    console.log(`📊 Original: ${img.width}x${img.height}, Compressed: ${newWidth}x${newHeight}`);
-
-    return compressedDataUrl;
-  } catch (error) {
-    console.error('❌ Image compression failed, using original:', error);
-    return imageUri;
-  }
-};
-
-// Create test image (enhanced with more options)
-export const createTestImage = (color = '#FF0000', text = 'TEST', size = 100) => {
-  try {
-    // This creates a colored square as base64 data
+    // Create a canvas element
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
 
-    // Fill with specified color
+    // Fill background with specified color
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, size, size);
 
-    // Add text
+    // Add main text
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = `${size / 5}px Arial`;
+    ctx.font = `bold ${size / 6}px Arial`;
     ctx.textAlign = 'center';
-    ctx.fillText(text, size / 2, size / 2 + size / 10);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, size / 2, size / 2 - size / 8);
 
     // Add timestamp for uniqueness
-    ctx.font = `${size / 10}px Arial`;
-    ctx.fillText(new Date().toLocaleTimeString(), size / 2, size - size / 10);
+    ctx.font = `${size / 12}px Arial`;
+    const timestamp = new Date().toLocaleTimeString();
+    ctx.fillText(timestamp, size / 2, size / 2 + size / 6);
 
-    return canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
+    // Add size indicator
+    ctx.font = `${size / 15}px Arial`;
+    ctx.fillText(`${size}x${size}`, size / 2, size - size / 15);
+
+    // Convert to data URL
+    const dataUrl = canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
+    console.log('✅ Test image created:', dataUrl.substring(0, 50) + '...');
+    return dataUrl;
+
   } catch (error) {
     console.error('❌ Failed to create test image:', error);
     return null;
   }
 };
 
-// Test image upload system
+// Test the image upload system
 export const testImageUpload = async () => {
   try {
     console.log('🧪 Testing image upload system...');
 
     // Create test images
-    const mainTestImage = createTestImage('#FF0000', 'MAIN');
-    const frontTestImage = createTestImage('#00FF00', 'FRONT');
+    const backTestImage = createTestImage('#FF0000', 'BACK', 200);
+    const frontTestImage = createTestImage('#00FF00', 'FRONT', 200);
 
-    console.log('🎨 Test images created');
+    if (!backTestImage || !frontTestImage) {
+      throw new Error('Failed to create test images');
+    }
+
+    console.log('🎨 Test images created successfully');
 
     // Test single image upload
-    const singleResult = await uploadImage(mainTestImage, 'TEST_GROUP', 'test_user_123');
+    console.log('📤 Testing single image upload...');
+    const singleResult = await uploadImage(backTestImage, 'TEST_GROUP', 'test_user_123', 'test');
     console.log('✅ Single image upload test successful!');
 
     // Test dual image upload
-    const dualResult = await uploadDualImages(mainTestImage, frontTestImage, 'TEST_GROUP', 'test_user_123');
+    console.log('📤 Testing dual image upload...');
+    const dualResult = await uploadDualImages(backTestImage, frontTestImage, 'TEST_GROUP', 'test_user_123');
     console.log('✅ Dual image upload test successful!');
 
+    console.log('🎉 All image upload tests passed!');
     return {
+      success: true,
       single: singleResult,
       dual: dualResult
     };
   } catch (error) {
     console.error('❌ Image upload test failed:', error);
-    return null;
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
 
-// Get image metadata without downloading
+// Get image metadata from download URL
 export const getImageMetadata = (downloadURL) => {
   try {
-    // Extract metadata from URL path if needed
+    if (!downloadURL) {
+      return null;
+    }
+
     const url = new URL(downloadURL);
     const pathParts = url.pathname.split('/');
 
     return {
       downloadURL,
       pathParts,
-      // Add more metadata extraction as needed
+      host: url.host,
+      pathname: url.pathname
     };
   } catch (error) {
     console.error('❌ Failed to get image metadata:', error);

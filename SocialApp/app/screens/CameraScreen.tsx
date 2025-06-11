@@ -104,15 +104,22 @@ export default function CameraScreen() {
         setFacing(secondCamera);
         setCaptureMode("second");
 
-        // Wait for camera to initialize
+        // Wait for camera to initialize with a longer delay
         console.log("⏳ Waiting for camera to initialize...");
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Increased to 1 second
 
-        // Step 3: Take second photo
+        // Additional wait for camera to stabilize
+        console.log("⏳ Waiting for camera to stabilize...");
+        await new Promise((resolve) => setTimeout(resolve, 500)); // Additional 500ms
+
+        // Step 3: Take second photo with adjusted settings
         console.log("📸 Taking second photo...");
         const secondPhoto = await cameraRef.current.takePictureAsync({
           quality: 0.8,
           base64: false,
+          // Add camera settings to help with color balance
+          exif: true,
+          skipProcessing: false, // Ensure image processing is applied
         });
 
         if (secondPhoto?.uri) {
@@ -134,6 +141,7 @@ export default function CameraScreen() {
                 firstCamera === "front" ? firstPhoto.uri : secondPhoto.uri,
               groupId: groupId,
               groupName: groupName,
+              firstCameraUsed: firstCamera,
             },
           });
         } else {

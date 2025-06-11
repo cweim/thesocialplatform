@@ -1,86 +1,149 @@
 // src/services/postService.js
 import { db } from './firebase';
 import { collection, addDoc, query, where, orderBy, getDocs, doc, updateDoc, increment, getDoc } from 'firebase/firestore';
-import { uploadImage } from './imageService';
 import { updateUserLocally, updateUserActivity } from './userService';
 
-// Create a new post with image and update user/group stats
-export const createPost = async (imageUri, caption, authorName, authorId, groupId, frontImageUri = null) => {
+// Create a new post with dual images and update user/group stats
+export const createPost = async (backImageUri, caption, authorName, authorId, groupId, frontImageUri = null) => {
   try {
-    console.log('🔄 Creating new post...');
-    console.log('👤 Author:', authorName, 'Group:', groupId);
-    console.log('📸 Main Image URI:', imageUri);
-    if (frontImageUri) {
-      console.log('📸 Front Image URI:', frontImageUri);
+    console.log('=== POST CREATION START ===');
+    console.log('👤 Author:', authorName, 'ID:', authorId);
+    console.log('🎯 Target Group:', groupId);
+    console.log('📸 Back Camera URI:', backImageUri?.substring(0, 50) + '...');
+    console.log('📸 Front Camera URI:', frontImageUri?.substring(0, 50) + '...');
+    console.log('📝 Caption length:', caption?.length);
+
+    // Comprehensive input validation
+    if (!backImageUri) {
+      throw new Error('Back camera image is required');
+    }
+    if (!caption?.trim()) {
+      throw new Error('Caption is required and cannot be empty');
+    }
+    if (!authorName?.trim()) {
+      throw new Error('Author name is required');
+    }
+    if (!authorId?.trim()) {
+      throw new Error('Author ID is required');
+    }
+    if (!groupId?.trim()) {
+      throw new Error('Group ID is required');
     }
 
-    // Validate inputs
-    if (!imageUri || !caption?.trim() || !authorName || !authorId || !groupId) {
-      throw new Error('Missing required post data');
-    }
+    console.log('✅ Input validation passed');
 
-    // Check if user is member of the group (optional validation)
+    // Optional: Check if user is member of the group
     const isMember = await validateGroupMembership(authorId, groupId);
     if (!isMember) {
       console.warn('⚠️ User might not be a member of this group, but proceeding...');
     }
 
     // Handle image uploads through imageService
+    console.log('📤 Starting image upload process...');
     const { uploadDualImages, uploadImage } = await import('./imageService');
     let imageResult;
 
     try {
       if (frontImageUri) {
-        imageResult = await uploadDualImages(imageUri, frontImageUri, groupId, authorId);
+        console.log('📸 Uploading dual images (back + front)...');
+        imageResult = await uploadDualImages(backImageUri, frontImageUri, groupId, authorId);
+        console.log('✅ Dual image upload completed:', {
+          hasMain: !!imageResult.main?.downloadURL,
+          hasFront: !!imageResult.front?.downloadURL
+        });
       } else {
-        imageResult = await uploadImage(imageUri, groupId, authorId);
+        console.log('📸 Uploading single image (back only)...');
+        imageResult = await uploadImage(backImageUri, groupId, authorId);
+        console.log('✅ Single image upload completed:', !!imageResult.downloadURL);
       }
     } catch (uploadError) {
       console.error('❌ Image upload failed:', uploadError);
-      throw new Error(`Failed to upload image: ${uploadError.message}`);
+      throw new Error(`Failed to upload images: ${uploadError.message}`);
     }
 
-    // Create post data
+    // Validate upload results
+    if (frontImageUri) {
+      if (!imageResult.main?.downloadURL) {
+        throw new Error('Back camera image upload failed - no download URL');
+      }
+      if (!imageResult.front?.downloadURL) {
+        throw new Error('Front camera image upload failed - no download URL');
+      }
+    } else {
+      if (!imageResult.downloadURL) {
+        throw new Error('Image upload failed - no download URL');
+      }
+    }
+
+    // Create post data structure
     const postData = {
+      // Image URLs
       imageUrl: frontImageUri ? imageResult.main.downloadURL : imageResult.downloadURL,
-      frontImageUrl: frontImageUri ? imageResult.front?.downloadURL : null,
-      compositeImageUrl: frontImageUri ? imageResult.composite?.downloadURL : null,
+      frontImageUrl: frontImageUri ? imageResult.front.downloadURL : null,
+
+      // Post content
       caption: caption.trim(),
-      authorName: authorName,
-      authorId: authorId,
-      groupId: groupId,
+      authorName: authorName.trim(),
+      authorId: authorId.trim(),
+      groupId: groupId.trim(),
       createdAt: new Date(),
+
+      // Image metadata
       imageSize: frontImageUri ? imageResult.main.size : imageResult.size,
       imagePath: frontImageUri ? imageResult.main.path : imageResult.path,
+      frontImageSize: frontImageUri ? imageResult.front.size : null,
+      frontImagePath: frontImageUri ? imageResult.front.path : null,
+
+      // Interaction data
       likes: 0,
-      likedBy: []
+      likedBy: [],
+
+      // Post type
+      type: frontImageUri ? 'dual_camera' : 'single_camera'
     };
 
+    console.log('💾 Saving post to Firestore...');
+    console.log('📊 Post data structure:', {
+      hasImageUrl: !!postData.imageUrl,
+      hasFrontImageUrl: !!postData.frontImageUrl,
+      captionLength: postData.caption.length,
+      type: postData.type
+    });
+
     // Save post to Firestore
-    console.log('💾 Saving post to database...');
     const docRef = await addDoc(collection(db, 'posts'), postData);
     const newPost = { id: docRef.id, ...postData };
 
-    console.log('✅ Post created successfully:', docRef.id);
+    console.log('✅ Post saved to Firestore with ID:', docRef.id);
 
     // Update user and group statistics after successful post creation
-    await updatePostStatistics(authorId, groupId, newPost);
-
-    return newPost;
-  } catch (error) {
-    console.error('❌ Failed to create post:', error);
-    if (error instanceof Error) {
-      console.error('Error details:', error.message);
-      console.error('Error stack:', error.stack);
+    try {
+      await updatePostStatistics(authorId, groupId, newPost);
+    } catch (statsError) {
+      console.error('⚠️ Failed to update statistics (post still created):', statsError);
+      // Don't throw here - post was already created successfully
     }
-    throw error;
+
+    console.log('🎉 Post creation completed successfully');
+    return newPost;
+
+  } catch (error) {
+    console.error('❌ POST CREATION FAILED:', error);
+    console.error('Error type:', typeof error);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+
+    // Re-throw with more context
+    const contextualError = new Error(`Post creation failed: ${error.message}`);
+    contextualError.originalError = error;
+    throw contextualError;
   }
 };
 
 // Update user and group statistics after posting
 const updatePostStatistics = async (authorId, groupId, post) => {
   try {
-    console.log('📊 Updating user and group statistics...');
+    console.log('📊 Updating post statistics...');
 
     // Update user's posting status and activity
     await updateUserPostingStatus(authorId, groupId, post);
@@ -91,20 +154,26 @@ const updatePostStatistics = async (authorId, groupId, post) => {
     console.log('✅ Statistics updated successfully');
   } catch (error) {
     console.error('❌ Failed to update statistics:', error);
-    // Don't throw here - post was already created successfully
+    throw error; // Let the caller decide how to handle this
   }
 };
 
 // Update user's posting status and activity tracking
 const updateUserPostingStatus = async (authorId, groupId, post) => {
   try {
+    console.log('👤 Updating user posting status...');
+
     // Get current user data
     const { getUserLocally } = await import('./userService');
     const currentUser = await getUserLocally();
 
-    if (!currentUser || currentUser.id !== authorId) {
-      console.warn('⚠️ Could not update user posting status - user mismatch');
-      return;
+    if (!currentUser) {
+      throw new Error('Could not retrieve current user data');
+    }
+
+    if (currentUser.id !== authorId) {
+      console.warn('⚠️ User ID mismatch - expected:', authorId, 'got:', currentUser.id);
+      // Continue anyway but log the discrepancy
     }
 
     const groupsPosted = currentUser.groupsPosted || [];
@@ -122,50 +191,80 @@ const updateUserPostingStatus = async (authorId, groupId, post) => {
       console.log('🎉 First post in group detected - unlocking group feed');
     }
 
-    // Update user data
-    await updateUserLocally(updateData, true); // Sync to Firebase
+    console.log('💾 Updating user data:', {
+      newTotalPosts: updateData.totalPosts,
+      isFirstPostInGroup,
+      groupsPostedLength: updateData.groupsPosted?.length || groupsPosted.length
+    });
 
-    // Track activity
+    // Update user data locally and sync to Firebase
+    await updateUserLocally(updateData, true);
+
+    // Track activity for analytics
     const activityType = isFirstPostInGroup ? 'first_post_in_group' : 'posted_in_group';
     await updateUserActivity(activityType, {
       groupId: groupId,
       postId: post.id,
+      postType: post.type,
       caption: post.caption.substring(0, 50) + (post.caption.length > 50 ? '...' : '')
     });
 
     console.log('✅ User posting status updated');
   } catch (error) {
     console.error('❌ Failed to update user posting status:', error);
+    throw error;
   }
 };
 
 // Update group statistics in Firebase
 const updateGroupStatistics = async (groupId) => {
   try {
+    console.log('🏠 Updating group statistics for:', groupId);
+
     const groupRef = doc(db, 'groups', groupId);
     await updateDoc(groupRef, {
       totalPosts: increment(1),
       lastActivity: new Date()
     });
+
     console.log('✅ Group statistics updated');
   } catch (error) {
     console.error('❌ Failed to update group statistics:', error);
-    // Don't throw - this is not critical for post creation
+
+    // Check if it's a permissions error
+    if (error.code === 'permission-denied') {
+      console.warn('⚠️ Permission denied updating group stats - continuing...');
+      return; // Don't throw for permission errors
+    }
+
+    throw error;
   }
 };
 
 // Validate if user is a member of the group
 const validateGroupMembership = async (userId, groupId) => {
   try {
+    console.log('🔒 Validating group membership...');
+
     const groupRef = doc(db, 'groups', groupId);
     const groupDoc = await getDoc(groupRef);
 
     if (groupDoc.exists()) {
       const groupData = groupDoc.data();
       const members = groupData.members || [];
-      return members.includes(userId);
+      const isMember = members.includes(userId);
+
+      console.log('👥 Group membership check:', {
+        groupExists: true,
+        totalMembers: members.length,
+        isMember: isMember
+      });
+
+      return isMember;
+    } else {
+      console.warn('⚠️ Group does not exist:', groupId);
+      return false;
     }
-    return false;
   } catch (error) {
     console.error('❌ Error validating group membership:', error);
     return false; // Assume not a member on error
@@ -302,48 +401,67 @@ export const getUserPostingStats = async (userId) => {
   }
 };
 
-// Test the complete posts system
+// Test the complete posts system with dual images
 export const testPostsSystem = async () => {
   try {
     console.log('🧪 Testing complete posts system...');
 
     // Import test image function
     const { createTestImage } = await import('./imageService');
-    const testImageData = createTestImage();
+    const backTestImage = createTestImage('#FF0000', 'BACK', 200);
+    const frontTestImage = createTestImage('#00FF00', 'FRONT', 200);
 
-    // Create a test post
+    if (!backTestImage || !frontTestImage) {
+      throw new Error('Failed to create test images');
+    }
+
+    console.log('🎨 Test images created');
+
+    // Test dual image post creation
     const testPost = await createPost(
-      testImageData,
-      'This is a test post with a red square! 🟥',
+      backTestImage,
+      'This is a test dual camera post! 📸🔄📸',
       'Test User',
       'test_user_123',
-      'TEST_GROUP'
+      'TEST_GROUP',
+      frontTestImage
     );
 
-    if (!testPost) throw new Error('Failed to create test post');
+    if (!testPost) {
+      throw new Error('Failed to create test post');
+    }
 
-    // Wait a moment for the post to be saved
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log('✅ Dual image post created successfully:', testPost.id);
+
+    // Wait for database operations to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Retrieve posts from the group
     const posts = await getGroupPosts('TEST_GROUP');
     if (posts.length === 0) {
-      throw new Error('No posts retrieved - there might be a delay');
+      console.warn('⚠️ No posts retrieved - there might be a delay');
     }
 
     // Test user posting stats
     const userStats = await getUserPostingStats('test_user_123');
 
-    console.log('✅ Posts system working perfectly!');
-    console.log('📝 Created post:', testPost.caption);
+    console.log('🎉 Posts system test completed!');
+    console.log('📝 Created post type:', testPost.type);
     console.log('📚 Retrieved', posts.length, 'posts');
-    console.log('🖼️ First post image:', posts[0].imageUrl);
+    console.log('🖼️ Post has front image:', !!testPost.frontImageUrl);
     console.log('📊 User stats:', userStats);
 
-    return true;
+    return {
+      success: true,
+      post: testPost,
+      postsRetrieved: posts.length,
+      userStats: userStats
+    };
   } catch (error) {
     console.error('❌ Posts system test failed:', error);
-    console.log('ℹ️ Note: Sometimes there\'s a delay in Firestore queries');
-    return false;
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
