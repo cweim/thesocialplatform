@@ -118,7 +118,7 @@ export const createPost = async (backImageUri, caption, authorName, authorId, gr
 
     // Update user and group statistics after successful post creation
     try {
-      await updatePostStatistics(authorId, groupId, newPost);
+    await updatePostStatistics(authorId, groupId, newPost);
     } catch (statsError) {
       console.error('⚠️ Failed to update statistics (post still created):', statsError);
       // Don't throw here - post was already created successfully
@@ -131,7 +131,7 @@ export const createPost = async (backImageUri, caption, authorName, authorId, gr
     console.error('❌ POST CREATION FAILED:', error);
     console.error('Error type:', typeof error);
     console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
+      console.error('Error stack:', error.stack);
 
     // Re-throw with more context
     const contextualError = new Error(`Post creation failed: ${error.message}`);
@@ -263,7 +263,7 @@ const validateGroupMembership = async (userId, groupId) => {
       return isMember;
     } else {
       console.warn('⚠️ Group does not exist:', groupId);
-      return false;
+    return false;
     }
   } catch (error) {
     console.error('❌ Error validating group membership:', error);

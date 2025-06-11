@@ -13,7 +13,14 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { getUserLocally } from "../../src/services/userService";
-import { getGroupPosts } from "../../src/services/postService";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
+import { db } from "../../src/services/firebase";
 
 interface User {
   id: string;
@@ -48,12 +55,12 @@ export default function GroupFeedScreen() {
   const groupName = params.groupName as string;
 
   useEffect(() => {
-    loadUserAndFeed();
+    loadUserAndSetupFeed();
   }, [groupId]);
 
-  const loadUserAndFeed = async () => {
+  const loadUserAndSetupFeed = async () => {
     try {
-      console.log("📱 Loading user and feed data for group:", groupId);
+      console.log("📱 Loading user and setting up feed for group:", groupId);
       const currentUser = await getUserLocally();
       setUser(currentUser);
 
@@ -65,9 +72,34 @@ export default function GroupFeedScreen() {
           currentUser.groupsPosted?.includes(groupId) || false;
         console.log("📊 Has posted in this group:", hasPostedInGroup);
 
-        // Always load the feed (for preview behind overlay)
-        const groupPosts = await getGroupPosts(groupId);
-        setPosts(groupPosts);
+        // Set up real-time listener for posts
+        const postsQuery = query(
+          collection(db, "posts"),
+          where("groupId", "==", groupId),
+          orderBy("createdAt", "desc")
+        );
+
+        // Subscribe to real-time updates
+        const unsubscribe = onSnapshot(
+          postsQuery,
+          (snapshot) => {
+            const updatedPosts: Post[] = [];
+            snapshot.forEach((doc) => {
+              updatedPosts.push({ id: doc.id, ...doc.data() } as Post);
+            });
+            console.log(
+              "📱 Received real-time update:",
+              updatedPosts.length,
+              "posts"
+            );
+            setPosts(updatedPosts);
+            setLoading(false);
+          },
+          (error) => {
+            console.error("❌ Error in real-time listener:", error);
+            setLoading(false);
+          }
+        );
 
         // Show lock overlay if user hasn't posted in THIS group
         if (!hasPostedInGroup) {
@@ -79,10 +111,15 @@ export default function GroupFeedScreen() {
           setIsLocked(false);
           console.log("✅ Feed unlocked - user has posted in this group");
         }
+
+        // Cleanup subscription on unmount
+        return () => {
+          console.log("🧹 Cleaning up real-time listener");
+          unsubscribe();
+        };
       }
     } catch (error) {
-      console.error("❌ Error loading feed:", error);
-    } finally {
+      console.error("❌ Error setting up feed:", error);
       setLoading(false);
     }
   };
