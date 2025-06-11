@@ -2,6 +2,7 @@
 import React, { useEffect } from "react";
 import { View, Text, StyleSheet, Animated, Platform } from "react-native";
 import { useRouter } from "expo-router";
+import { getUserLocally } from "../../src/services/userService";
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -24,19 +25,30 @@ export default function WelcomeScreen() {
       }),
     ]).start();
 
-    // Navigate to auth screen after splash
-    const navigateToAuth = async () => {
+    // Check user status and navigate accordingly
+    const checkUserAndNavigate = async () => {
       try {
-        // Wait for 3 seconds to show splash
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        router.replace("/screens/AuthScreen");
+        // Wait for 2 seconds to show splash
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Check if user exists
+        const user = await getUserLocally();
+
+        if (user) {
+          console.log("👤 Existing user found, navigating to groups");
+          router.replace("/screens/GroupsOverviewScreen");
+        } else {
+          console.log("👤 No existing user, navigating to auth");
+          router.replace("/screens/AuthScreen");
+        }
       } catch (error) {
-        console.error("❌ Error navigating to auth:", error);
+        console.error("❌ Error checking user status:", error);
+        // On error, default to auth screen
         router.replace("/screens/AuthScreen");
       }
     };
 
-    navigateToAuth();
+    checkUserAndNavigate();
   }, []);
 
   return (
