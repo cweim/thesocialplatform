@@ -243,6 +243,32 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.container}>
+      <CameraView
+        style={StyleSheet.absoluteFillObject}
+        facing={facing}
+        ref={cameraRef}
+      >
+        {/* Capture Progress Indicator */}
+        {captureMode !== "ready" && (
+          <View style={styles.captureProgressOverlay}>
+            <View style={styles.progressCard}>
+              <ActivityIndicator size="large" color="white" />
+            </View>
+          </View>
+        )}
+
+        {/* First Upload Welcome */}
+        {isFirstPostInGroup && captureMode === "ready" && (
+          <View style={styles.welcomeOverlay}>
+            <View style={styles.welcomeCard}>
+              <Text style={styles.welcomeText}>Welcome to {groupName}! 👋</Text>
+              <Text style={styles.welcomeSubtext}>
+                Take your first BeYou moment to unlock this group's feed
+              </Text>
+            </View>
+          </View>
+        )}
+      </CameraView>
       {/* Header */}
       <SafeAreaView style={styles.headerSafe}>
         <View style={styles.header}>
@@ -263,35 +289,6 @@ export default function CameraScreen() {
           </TouchableOpacity>
         </View>
       </SafeAreaView>
-
-      {/* Camera View */}
-      <View style={styles.cameraContainer}>
-        <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-          {/* Capture Progress Indicator */}
-          {captureMode !== "ready" && (
-            <View style={styles.captureProgressOverlay}>
-              <View style={styles.progressCard}>
-                <ActivityIndicator size="large" color="white" />
-              </View>
-            </View>
-          )}
-
-          {/* First Upload Welcome */}
-          {isFirstPostInGroup && captureMode === "ready" && (
-            <View style={styles.welcomeOverlay}>
-              <View style={styles.welcomeCard}>
-                <Text style={styles.welcomeText}>
-                  Welcome to {groupName}! 👋
-                </Text>
-                <Text style={styles.welcomeSubtext}>
-                  Take your first BeYou moment to unlock this group's feed
-                </Text>
-              </View>
-            </View>
-          )}
-        </CameraView>
-      </View>
-
       {/* Controls */}
       <View style={styles.controls}>
         <Text style={styles.instructionsText}>
@@ -394,7 +391,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   headerSafe: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
     backgroundColor: "rgba(0, 0, 0, 0.8)",
+    zIndex: 2,
   },
   header: {
     flexDirection: "row",
@@ -436,61 +438,16 @@ const styles = StyleSheet.create({
   galleryHeaderText: {
     fontSize: 18,
   },
-  cameraContainer: {
-    flex: 1,
-  },
-  camera: {
-    flex: 1,
-  },
-  captureProgressOverlay: {
+  controls: {
     position: "absolute",
-    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  progressCard: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    padding: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
-  },
-  welcomeOverlay: {
-    position: "absolute",
-    top: 80,
-    left: 20,
-    right: 20,
-  },
-  welcomeCard: {
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
-  },
-  welcomeText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  welcomeSubtext: {
-    color: "rgba(255, 255, 255, 0.8)",
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-  controls: {
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
-    paddingVertical: 40,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingVertical: 16,
     paddingHorizontal: 20,
     alignItems: "center",
+    zIndex: 2,
   },
   instructionsText: {
     color: "rgba(255, 255, 255, 0.8)",
@@ -548,5 +505,53 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 50, // Same width as flip button for symmetry
+  },
+  captureProgressOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  progressCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    padding: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  welcomeOverlay: {
+    position: "absolute",
+    top: 80,
+    left: 20,
+    right: 20,
+  },
+  welcomeCard: {
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  welcomeText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  welcomeSubtext: {
+    color: "rgba(255, 255, 255, 0.8)",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  camera: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
   },
 });
