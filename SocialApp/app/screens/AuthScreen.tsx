@@ -14,6 +14,14 @@ import { login, signUp } from "../../src/services/authService";
 import { saveUserLocally } from "../../src/services/userService";
 import { showAlert } from "../../src/utils/alert";
 
+interface Comment {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  createdAt: any;
+}
+
 export default function AuthScreen() {
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);

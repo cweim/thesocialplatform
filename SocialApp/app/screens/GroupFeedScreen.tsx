@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Platform,
+  TextInput,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { getUserLocally } from "../../src/services/userService";
@@ -19,6 +20,10 @@ import {
   where,
   orderBy,
   onSnapshot,
+  doc,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
 } from "firebase/firestore";
 import { db } from "../../src/services/firebase";
 
@@ -37,6 +42,16 @@ interface Post {
   authorName: string;
   createdAt: any;
   location?: string;
+  likes: string[]; // Array of user IDs who liked the post
+  comments: Comment[]; // Array of comments on the post
+}
+
+interface Comment {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  createdAt: any;
 }
 
 export default function GroupFeedScreen() {
@@ -46,6 +61,10 @@ export default function GroupFeedScreen() {
   const [isLocked, setIsLocked] = useState(false);
   const [toggledPosts, setToggledPosts] = useState<{ [key: string]: boolean }>(
     {}
+  );
+  const [newCommentText, setNewCommentText] = useState("");
+  const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(
+    null
   );
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -85,7 +104,19 @@ export default function GroupFeedScreen() {
           (snapshot) => {
             const updatedPosts: Post[] = [];
             snapshot.forEach((doc) => {
-              updatedPosts.push({ id: doc.id, ...doc.data() } as Post);
+              const data = doc.data();
+              updatedPosts.push({
+                id: doc.id,
+                imageUrl: data.imageUrl || "",
+                frontImageUrl: data.frontImageUrl || "",
+                caption: data.caption || "",
+                authorId: data.authorId || "",
+                authorName: data.authorName || "",
+                createdAt: data.createdAt,
+                location: data.location,
+                likes: Array.isArray(data.likes) ? data.likes : [],
+                comments: Array.isArray(data.comments) ? data.comments : [],
+              });
             });
             console.log(
               "📱 Received real-time update:",
@@ -193,6 +224,61 @@ export default function GroupFeedScreen() {
     }));
   };
 
+  // Like/unlike logic
+  const handleLike = async (postId: string, isCurrentlyLiked: boolean) => {
+    if (!user) return;
+    try {
+      // Optimistically update UI
+      setPosts((prevPosts) =>
+        prevPosts.map((p) =>
+          p.id === postId
+            ? {
+                ...p,
+                likes: isCurrentlyLiked
+                  ? p.likes.filter((uid) => uid !== user.id)
+                  : [...p.likes, user.id],
+              }
+            : p
+        )
+      );
+      // Update Firestore
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, {
+        likes: isCurrentlyLiked ? arrayRemove(user.id) : arrayUnion(user.id),
+      });
+    } catch (error) {
+      console.error("Error updating like:", error);
+    }
+  };
+
+  // Add comment logic
+  const handleAddComment = async (postId: string) => {
+    if (!user || !newCommentText.trim()) return;
+    const comment: Comment = {
+      id: `${user.id}_${Date.now()}`,
+      userId: user.id,
+      userName: user.name,
+      text: newCommentText.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      // Optimistically update UI
+      setPosts((prevPosts) =>
+        prevPosts.map((p) =>
+          p.id === postId ? { ...p, comments: [...p.comments, comment] } : p
+        )
+      );
+      setNewCommentText("");
+      // Update Firestore
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, {
+        comments: arrayUnion(comment),
+      });
+    } catch (error) {
+      console.error("Error adding comment:", error);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -205,6 +291,10 @@ export default function GroupFeedScreen() {
   const renderPost = (post: Post, index: number) => {
     const { time, date } = formatPostDateTime(post.createdAt);
     const isToggled = toggledPosts[post.id];
+    const likesArr = Array.isArray(post.likes) ? post.likes : [];
+    const commentsArr = Array.isArray(post.comments) ? post.comments : [];
+    const isLiked = user ? likesArr.includes(user.id) : false;
+    const isCommentOpen = activeCommentPostId === post.id;
 
     return (
       <View key={post.id || index} style={styles.postContainer}>
@@ -259,6 +349,70 @@ export default function GroupFeedScreen() {
         {post.caption && (
           <View style={styles.captionContainer}>
             <Text style={styles.caption}>{post.caption}</Text>
+          </View>
+        )}
+
+        {/* Like Button and Count */}
+        <View style={styles.postActions}>
+          <TouchableOpacity
+            style={styles.likeButton}
+            onPress={() => handleLike(post.id, isLiked)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.likeIcon, isLiked && styles.liked]}>
+              {isLiked ? "❤️" : "🤍"}
+            </Text>
+            <Text style={styles.likeCount}>{likesArr.length}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.commentButton}
+            activeOpacity={0.7}
+            onPress={() =>
+              setActiveCommentPostId(isCommentOpen ? null : post.id)
+            }
+          >
+            <Text style={styles.commentIcon}>💬</Text>
+            <Text style={styles.commentCount}>{commentsArr.length}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Only render comment section for the active post */}
+        {isCommentOpen && (
+          <View>
+            {/* Comments List */}
+            <View style={styles.commentsList}>
+              {commentsArr.length === 0 ? (
+                <Text style={styles.noCommentsText}>
+                  No comments yet. Be the first!
+                </Text>
+              ) : (
+                commentsArr.map((comment) => (
+                  <View key={comment.id} style={styles.commentItem}>
+                    <Text style={styles.commentUser}>{comment.userName}:</Text>
+                    <Text style={styles.commentText}>{comment.text}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+            {/* Comment Input */}
+            <View style={styles.commentInputContainer}>
+              <TextInput
+                style={styles.commentInput}
+                placeholder="Add a comment..."
+                placeholderTextColor="#aaa"
+                value={newCommentText}
+                onChangeText={setNewCommentText}
+                onSubmitEditing={() => handleAddComment(post.id)}
+                returnKeyType="send"
+              />
+              <TouchableOpacity
+                style={styles.sendCommentButton}
+                onPress={() => handleAddComment(post.id)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sendCommentText}>Send</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -656,5 +810,94 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.5)",
     textAlign: "center",
     fontStyle: "italic",
+  },
+  postActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 16,
+  },
+  likeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  likeIcon: {
+    fontSize: 22,
+    marginRight: 6,
+  },
+  liked: {
+    color: "#e74c3c",
+  },
+  likeCount: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  commentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  commentIcon: {
+    fontSize: 20,
+    marginRight: 6,
+    color: "#00bfff",
+  },
+  commentCount: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  commentInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+  },
+  commentInput: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#333333",
+    borderRadius: 20,
+    color: "white",
+  },
+  sendCommentButton: {
+    padding: 12,
+    borderRadius: 20,
+    backgroundColor: "#00bfff",
+    marginLeft: 8,
+  },
+  sendCommentText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  commentsList: {
+    padding: 16,
+  },
+  commentItem: {
+    marginBottom: 12,
+  },
+  commentUser: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "white",
+  },
+  commentText: {
+    fontSize: 14,
+    color: "rgba(255, 255, 255, 0.7)",
+  },
+  noCommentsText: {
+    fontSize: 16,
+    color: "rgba(255, 255, 255, 0.7)",
+    textAlign: "center",
   },
 });

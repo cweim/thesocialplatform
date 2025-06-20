@@ -115,6 +115,12 @@ export default function GroupsOverviewScreen() {
       <View style={styles.header}>
         <Text style={styles.welcomeText}>Welcome back, {userName}!</Text>
         <Text style={styles.subtitle}>Your Groups</Text>
+        <TouchableOpacity
+          style={styles.likedPostsButton}
+          onPress={() => router.push("/screens/LikedPostsScreen")}
+        >
+          <Text style={styles.likedPostsIcon}>❤️</Text>
+        </TouchableOpacity>
       </View>
 
       {groups.length === 0 ? (
@@ -287,5 +293,19 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  likedPostsButton: {
+    position: "absolute",
+    top: 24,
+    right: 24,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    zIndex: 10,
+  },
+  likedPostsIcon: {
+    fontSize: 24,
+    color: "#e74c3c",
+    fontWeight: "bold",
   },
 });
