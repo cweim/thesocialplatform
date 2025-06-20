@@ -161,7 +161,8 @@ export default function CaptionScreen() {
         user.name,
         user.id,
         groupId as string,
-        (frontImageUri ? (frontImageUri as string) : null) as null | undefined
+        (frontImageUri ? String(frontImageUri) : null) as any,
+        user.profilePicUrl || null // Pass profile photo
       );
 
       if (!newPost) {

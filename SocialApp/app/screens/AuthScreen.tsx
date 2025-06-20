@@ -48,7 +48,11 @@ export default function AuthScreen() {
         // Save user locally without password
         const { password: _, ...userWithoutPassword } = user;
         await saveUserLocally(userWithoutPassword);
-        router.replace("/screens/GroupsOverviewScreen");
+        if (isLogin) {
+          router.replace("/screens/GroupsOverviewScreen");
+        } else {
+          router.replace("/screens/CompleteProfileScreen");
+        }
       }
     } catch (error: any) {
       showAlert("Error", error.message || "Authentication failed");

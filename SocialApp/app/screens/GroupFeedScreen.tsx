@@ -44,6 +44,7 @@ interface Post {
   location?: string;
   likes: string[]; // Array of user IDs who liked the post
   comments: Comment[]; // Array of comments on the post
+  authorProfilePicUrl?: string; // Optional profile pic for author
 }
 
 interface Comment {
@@ -116,6 +117,7 @@ export default function GroupFeedScreen() {
                 location: data.location,
                 likes: Array.isArray(data.likes) ? data.likes : [],
                 comments: Array.isArray(data.comments) ? data.comments : [],
+                authorProfilePicUrl: data.authorProfilePicUrl || "",
               });
             });
             console.log(
@@ -296,17 +298,35 @@ export default function GroupFeedScreen() {
     const isLiked = user ? likesArr.includes(user.id) : false;
     const isCommentOpen = activeCommentPostId === post.id;
 
+    const handleProfilePress = () => {
+      router.push({
+        pathname: "/screens/ProfileScreen",
+        params: { userId: post.authorId },
+      });
+    };
+
     return (
       <View key={post.id || index} style={styles.postContainer}>
         {/* Post Header */}
         <View style={styles.postHeader}>
-          <View style={styles.userSection}>
+          <TouchableOpacity
+            style={styles.userSection}
+            onPress={handleProfilePress}
+            activeOpacity={0.7}
+          >
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {post.authorId === user?.id
-                  ? user.name?.charAt(0).toUpperCase()
-                  : post.authorName?.charAt(0).toUpperCase()}
-              </Text>
+              {post.authorProfilePicUrl ? (
+                <Image
+                  source={{ uri: post.authorProfilePicUrl }}
+                  style={styles.avatarImage}
+                />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {post.authorId === user?.id
+                    ? user.name?.charAt(0).toUpperCase()
+                    : post.authorName?.charAt(0).toUpperCase()}
+                </Text>
+              )}
             </View>
             <View style={styles.userInfo}>
               <Text style={styles.userName}>
@@ -314,8 +334,7 @@ export default function GroupFeedScreen() {
               </Text>
               <Text style={styles.location}>{post.location || "BeYou"}</Text>
             </View>
-          </View>
-
+          </TouchableOpacity>
           <View style={styles.timeSection}>
             <Text style={styles.postTime}>{time}</Text>
             <Text style={styles.postDate}>{date}</Text>
@@ -899,5 +918,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "rgba(255, 255, 255, 0.7)",
     textAlign: "center",
+  },
+  avatarImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
 });

@@ -4,7 +4,7 @@ import { collection, addDoc, query, where, orderBy, getDocs, doc, updateDoc, inc
 import { updateUserLocally, updateUserActivity } from './userService';
 
 // Create a new post with dual images and update user/group stats
-export const createPost = async (backImageUri, caption, authorName, authorId, groupId, frontImageUri = null) => {
+export const createPost = async (backImageUri, caption, authorName, authorId, groupId, frontImageUri = null, authorProfilePicUrl = null) => {
   try {
     console.log('=== POST CREATION START ===');
     console.log('👤 Author:', authorName, 'ID:', authorId);
@@ -87,6 +87,7 @@ export const createPost = async (backImageUri, caption, authorName, authorId, gr
       authorId: authorId.trim(),
       groupId: groupId.trim(),
       createdAt: new Date(),
+      authorProfilePicUrl: authorProfilePicUrl || null,
 
       // Image metadata
       imageSize: frontImageUri ? imageResult.main.size : imageResult.size,

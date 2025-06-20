@@ -20,6 +20,11 @@ export interface User {
   lastActivity?: string;
   lastActivityType?: string;
   updatedAt?: string;
+  profilePicUrl?: string;
+  instagram?: string;
+  linkedin?: string;
+  phone?: string;
+  profileComplete?: boolean;
 }
 
 export interface ActivityLog {
